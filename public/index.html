@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+  <meta
+    http-equiv="Cache-Control"
+    content="no-store"
+  />
+  <title>Codespace Browser</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="background-glow glow-one"></div>
+  <div class="background-glow glow-two"></div>
+
+  <div class="app">
+    <header class="topbar">
+      <button id="menuBtn" class="round-btn">☰</button>
+
+      <div class="brand">
+        <div class="brand-icon">◈</div>
+        <div>
+          <div class="brand-title">Codespace Browser</div>
+          <div class="brand-subtitle">No-save localhost GUI</div>
+        </div>
+      </div>
+
+      <div class="nav-group">
+        <button id="backBtn" class="tool-btn" title="Back">←</button>
+        <button id="forwardBtn" class="tool-btn" title="Forward">→</button>
+        <button id="reloadBtn" class="tool-btn" title="Reload">↻</button>
+        <button id="homeBtn" class="tool-btn" title="Home">⌂</button>
+      </div>
+
+      <div class="address-shell">
+        <span class="address-icon">⌕</span>
+        <input
+          id="addressInput"
+          class="address-input"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search or enter a URL..."
+        />
+        <button id="goBtn" class="go-btn">Go</button>
+      </div>
+
+      <div class="right-actions">
+        <button id="newTabBtn" class="tool-btn" title="New tab">＋</button>
+        <button id="clearBtn" class="danger-btn" title="Clear memory">Clear</button>
+      </div>
+    </header>
+
+    <nav id="tabBar" class="tabbar"></nav>
+
+    <main class="main">
+      <aside id="sidebar" class="sidebar">
+        <div class="panel-title-row">
+          <div>
+            <h2>Search</h2>
+            <p>Results are temporary and only kept in RAM.</p>
+          </div>
+        </div>
+
+        <div id="resultsList" class="results-list">
+          <div class="empty-state">
+            <div class="empty-icon">⌕</div>
+            <strong>No search yet</strong>
+            <span>Type anything in the top bar and press Enter.</span>
+          </div>
+        </div>
+      </aside>
+
+      <section class="viewer">
+        <div class="viewer-toolbar">
+          <div id="statusText" class="status-pill">Ready.</div>
+
+          <button id="readerBtn" class="mode-btn">Reader</button>
+          <button id="browserBtn" class="mode-btn">Browser</button>
+          <button id="openBtn" class="mode-btn">Open</button>
+        </div>
+
+        <div class="viewer-body">
+          <div id="loader" class="loader">
+            <div class="spinner"></div>
+            <span>Loading...</span>
+          </div>
+
+          <section id="homeView" class="home-view">
+            <div class="hero-card">
+              <div class="hero-badge">Private in-memory session</div>
+              <h1>Modern browser UI inside Codespaces.</h1>
+              <p>
+                Search the web, open pages through a localhost preview, or use reader mode
+                for clean article text. The app does not write history, cache files, logs,
+                databases, localStorage, or cookies.
+              </p>
+
+              <div class="feature-grid">
+                <div class="feature-card">
+                  <strong>Tabs</strong>
+                  <span>Temporary tabs, removed when cleared or stopped.</span>
+                </div>
+                <div class="feature-card">
+                  <strong>Reader</strong>
+                  <span>Clean text extraction for many public pages.</span>
+                </div>
+                <div class="feature-card">
+                  <strong>Browser preview</strong>
+                  <span>Localhost proxy preview for basic websites.</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="readerView" class="reader-view"></section>
+
+          <section id="browserView" class="browser-view">
+            <iframe
+              id="browserFrame"
+              title="Browser preview"
+              sandbox="allow-scripts allow-forms allow-popups allow-modals"
+              referrerpolicy="no-referrer"
+            ></iframe>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

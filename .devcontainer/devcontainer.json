@@ -1,0 +1,20 @@
+{
+  "name": "Codespace Browser",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "postCreateCommand": "npm install --no-package-lock",
+  "forwardPorts": [7860],
+  "portsAttributes": {
+    "7860": {
+      "label": "Codespace Browser",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.enablePersistentSessions": false,
+        "terminal.integrated.persistentSessionReviveProcess": "never"
+      }
+    }
+  }
+}
