@@ -5,14 +5,15 @@ const $ = (id) => document.getElementById(id);
 const els = {
   address: $("addressInput"),
   tabBar: $("tabBar"),
-  results: $("resultsList"),
   status: $("statusText"),
   home: $("homeView"),
+  search: $("searchView"),
   reader: $("readerView"),
   browser: $("browserView"),
   frame: $("browserFrame"),
   loader: $("loader"),
-  toast: $("toast")
+  toast: $("toast"),
+  focusBtn: $("focusBtn")
 };
 
 const state = {
@@ -22,6 +23,10 @@ const state = {
 
 function uid() {
   return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+}
+
+function clean(value) {
+  return String(value || "").trim();
 }
 
 function toast(message) {
@@ -35,26 +40,16 @@ function loading(value) {
   els.loader.classList.toggle("visible", Boolean(value));
 }
 
-function clean(value) {
-  return String(value || "").trim();
-}
-
 function isProbablyUrl(value) {
   const text = clean(value);
-
   if (text.startsWith("http://") || text.startsWith("https://")) return true;
   if (text.includes(" ")) return false;
-
   return text.includes(".") && !text.startsWith(".");
 }
 
 function normalizeUrl(value) {
   const text = clean(value);
-
-  if (text.startsWith("http://") || text.startsWith("https://")) {
-    return text;
-  }
-
+  if (text.startsWith("http://") || text.startsWith("https://")) return text;
   return `https://${text}`;
 }
 
@@ -84,7 +79,6 @@ function createTab() {
 
   state.tabs.push(tab);
   state.activeId = tab.id;
-
   render();
 }
 
@@ -106,6 +100,16 @@ function closeTab(id) {
   render();
 }
 
+function currentSnapshot(tab) {
+  return {
+    title: tab.title,
+    url: tab.url,
+    mode: tab.mode,
+    results: tab.results,
+    reader: tab.reader
+  };
+}
+
 function pushHistory(tab, snapshot) {
   tab.history = tab.history.slice(0, tab.historyIndex + 1);
   tab.history.push(JSON.parse(JSON.stringify(snapshot)));
@@ -118,26 +122,12 @@ function applySnapshot(tab, snapshot) {
   tab.mode = snapshot.mode || "home";
   tab.results = snapshot.results || [];
   tab.reader = snapshot.reader || null;
-
-  if (tab.mode === "browser" && tab.url) {
-    els.frame.src = `/api/proxy?url=${encodeURIComponent(tab.url)}`;
-  }
-
   render();
 }
 
-function currentSnapshot(tab) {
-  return {
-    title: tab.title,
-    url: tab.url,
-    mode: tab.mode,
-    results: tab.results,
-    reader: tab.reader
-  };
-}
-
 function setMode(mode) {
-  els.home.style.display = mode === "home" || mode === "search" ? "grid" : "none";
+  els.home.style.display = mode === "home" ? "grid" : "none";
+  els.search.classList.toggle("visible", mode === "search");
   els.reader.classList.toggle("visible", mode === "reader");
   els.browser.classList.toggle("visible", mode === "browser");
 }
@@ -156,7 +146,11 @@ function renderTabs() {
 
     const icon = document.createElement("div");
     icon.className = "tab-favicon";
-    icon.textContent = tab.mode === "reader" ? "📄" : tab.mode === "browser" ? "🌐" : "⌕";
+    icon.textContent =
+      tab.mode === "reader" ? "📄" :
+      tab.mode === "browser" ? "🌐" :
+      tab.mode === "search" ? "⌕" :
+      "◇";
 
     const title = document.createElement("div");
     title.className = "tab-title";
@@ -189,30 +183,52 @@ function renderActive() {
 
   els.address.value = tab.url || "";
   els.status.textContent = tab.url || "Ready.";
-
   setMode(tab.mode);
 
-  renderResults(tab.results || []);
-  renderReader(tab.reader);
+  if (tab.mode === "search") renderSearchPage(tab);
+  if (tab.mode === "reader") renderReader(tab.reader);
+
+  if (tab.mode === "browser" && tab.url) {
+    const proxyUrl = `/api/proxy?url=${encodeURIComponent(tab.url)}`;
+    if (els.frame.dataset.currentUrl !== tab.url) {
+      els.frame.dataset.currentUrl = tab.url;
+      els.frame.src = proxyUrl;
+    }
+  }
 }
 
-function renderResults(results) {
-  els.results.innerHTML = "";
+function renderSearchPage(tab) {
+  els.search.innerHTML = "";
 
-  if (!results.length) {
-    els.results.innerHTML = `
-      <div class="empty-state">
-        <div>
-          <div class="empty-icon">⌕</div>
-          <strong>No search yet</strong>
-          <span>Type anything in the top bar and press Enter.</span>
-        </div>
-      </div>
-    `;
+  const page = document.createElement("div");
+  page.className = "search-page";
+
+  const heading = document.createElement("div");
+  heading.className = "search-heading";
+
+  const h1 = document.createElement("h1");
+  h1.textContent = `Search: ${tab.url}`;
+
+  const p = document.createElement("p");
+  p.textContent = "Results are shown in the big main renderer.";
+
+  heading.appendChild(h1);
+  heading.appendChild(p);
+  page.appendChild(heading);
+
+  if (!tab.results || !tab.results.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-results";
+    empty.textContent = "No results found.";
+    page.appendChild(empty);
+    els.search.appendChild(page);
     return;
   }
 
-  for (const result of results) {
+  const grid = document.createElement("div");
+  grid.className = "result-grid";
+
+  for (const result of tab.results) {
     const card = document.createElement("article");
     card.className = "result-card";
 
@@ -266,17 +282,16 @@ function renderResults(results) {
     card.appendChild(body);
     card.appendChild(actions);
 
-    els.results.appendChild(card);
+    grid.appendChild(card);
   }
+
+  page.appendChild(grid);
+  els.search.appendChild(page);
 }
 
 function renderReader(reader) {
-  if (!reader) {
-    els.reader.innerHTML = "";
-    return;
-  }
-
   els.reader.innerHTML = "";
+  if (!reader) return;
 
   const card = document.createElement("article");
   card.className = "reader-card";
@@ -324,19 +339,15 @@ async function searchWeb(query, push = true) {
     });
 
     const data = await response.json();
+    if (!data.ok) throw new Error(data.error || "Search failed.");
 
-    if (!data.ok) {
-      throw new Error(data.error || "Search failed.");
-    }
-
-    tab.title = query.slice(0, 32) || "Search";
+    tab.title = query.slice(0, 34) || "Search";
     tab.url = query;
     tab.mode = "search";
     tab.results = data.results || [];
     tab.reader = null;
 
     if (push) pushHistory(tab, currentSnapshot(tab));
-
     render();
   } catch (error) {
     toast(error.message);
@@ -351,7 +362,6 @@ async function openReader(rawUrl, push = true) {
   if (!tab) return;
 
   const url = normalizeUrl(rawUrl);
-
   loading(true);
   els.status.textContent = "Loading reader...";
 
@@ -366,10 +376,7 @@ async function openReader(rawUrl, push = true) {
     });
 
     const data = await response.json();
-
-    if (!data.ok) {
-      throw new Error(data.error || "Reader failed.");
-    }
+    if (!data.ok) throw new Error(data.error || "Reader failed.");
 
     tab.title = data.title || hostFromUrl(url);
     tab.url = data.url || url;
@@ -381,7 +388,6 @@ async function openReader(rawUrl, push = true) {
     };
 
     if (push) pushHistory(tab, currentSnapshot(tab));
-
     render();
   } catch (error) {
     toast(error.message);
@@ -402,23 +408,19 @@ function openBrowser(rawUrl, push = true) {
   tab.mode = "browser";
   tab.reader = null;
 
+  els.frame.dataset.currentUrl = "";
   els.frame.src = `/api/proxy?url=${encodeURIComponent(url)}`;
 
   if (push) pushHistory(tab, currentSnapshot(tab));
-
   render();
 }
 
 function go() {
   const value = clean(els.address.value);
-
   if (!value) return;
 
-  if (isProbablyUrl(value)) {
-    openBrowser(value);
-  } else {
-    searchWeb(value);
-  }
+  if (isProbablyUrl(value)) openBrowser(value);
+  else searchWeb(value);
 }
 
 function goHome(push = true) {
@@ -431,9 +433,9 @@ function goHome(push = true) {
   tab.results = [];
   tab.reader = null;
   els.frame.removeAttribute("src");
+  els.frame.dataset.currentUrl = "";
 
   if (push) pushHistory(tab, currentSnapshot(tab));
-
   render();
 }
 
@@ -442,6 +444,7 @@ function reload() {
   if (!tab) return;
 
   if (tab.mode === "browser" && tab.url) {
+    els.frame.dataset.currentUrl = "";
     els.frame.src = `/api/proxy?url=${encodeURIComponent(tab.url)}`;
   } else if (tab.mode === "reader" && tab.url) {
     openReader(tab.url, false);
@@ -453,7 +456,6 @@ function reload() {
 function back() {
   const tab = activeTab();
   if (!tab || tab.historyIndex <= 0) return;
-
   tab.historyIndex -= 1;
   applySnapshot(tab, tab.history[tab.historyIndex]);
 }
@@ -461,16 +463,30 @@ function back() {
 function forward() {
   const tab = activeTab();
   if (!tab || tab.historyIndex >= tab.history.length - 1) return;
-
   tab.historyIndex += 1;
   applySnapshot(tab, tab.history[tab.historyIndex]);
 }
 
 function clearSession() {
   els.frame.removeAttribute("src");
+  els.frame.dataset.currentUrl = "";
   state.tabs = [];
   createTab();
   toast("Temporary in-memory session cleared.");
+}
+
+function toggleFocusMode() {
+  const active = document.body.classList.toggle("focus-mode");
+  els.focusBtn.textContent = active ? "×" : "⛶";
+  els.focusBtn.title = active ? "Exit focus mode" : "Fullscreen renderer";
+
+  if (active && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+
+  if (!active && document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
 }
 
 $("goBtn").onclick = go;
@@ -480,34 +496,30 @@ $("reloadBtn").onclick = reload;
 $("homeBtn").onclick = () => goHome();
 $("newTabBtn").onclick = createTab;
 $("clearBtn").onclick = clearSession;
+$("focusBtn").onclick = toggleFocusMode;
 
 $("readerBtn").onclick = () => {
   const tab = activeTab();
   const value = clean(els.address.value || tab?.url || "");
-
   if (!value || !isProbablyUrl(value)) {
     toast("Enter a URL first.");
     return;
   }
-
   openReader(value);
 };
 
 $("browserBtn").onclick = () => {
   const tab = activeTab();
   const value = clean(els.address.value || tab?.url || "");
-
   if (!value || !isProbablyUrl(value)) {
     toast("Enter a URL first.");
     return;
   }
-
   openBrowser(value);
 };
 
 $("openBtn").onclick = () => {
   const value = clean(els.address.value);
-
   if (!value) {
     toast("Enter a URL or search first.");
     return;
@@ -521,14 +533,20 @@ $("openBtn").onclick = () => {
 };
 
 els.address.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    go();
-  }
+  if (event.key === "Enter") go();
 });
 
 window.addEventListener("message", (event) => {
   if (event.data?.type === "codespace-browser-navigate" && event.data.url) {
     openBrowser(event.data.url);
+  }
+});
+
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement && document.body.classList.contains("focus-mode")) {
+    document.body.classList.remove("focus-mode");
+    els.focusBtn.textContent = "⛶";
+    els.focusBtn.title = "Fullscreen renderer";
   }
 });
 

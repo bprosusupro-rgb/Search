@@ -1,9 +1,9 @@
 {
-  "name": "codespace-private-gui-browser",
-  "version": "1.0.0",
+  "name": "codespace-big-renderer-browser",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
-  "description": "Modern no-save localhost browser/search UI for GitHub Codespaces.",
+  "description": "Renderer-first no-save browser UI for GitHub Codespaces.",
   "scripts": {
     "start": "node server.js"
   },

@@ -2,14 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  />
-  <meta
-    http-equiv="Cache-Control"
-    content="no-store"
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-store" />
   <title>Codespace Browser</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
@@ -19,13 +13,11 @@
 
   <div class="app">
     <header class="topbar">
-      <button id="menuBtn" class="round-btn">☰</button>
-
       <div class="brand">
         <div class="brand-icon">◈</div>
-        <div>
+        <div class="brand-text">
           <div class="brand-title">Codespace Browser</div>
-          <div class="brand-subtitle">No-save localhost GUI</div>
+          <div class="brand-subtitle">Big renderer mode</div>
         </div>
       </div>
 
@@ -38,17 +30,14 @@
 
       <div class="address-shell">
         <span class="address-icon">⌕</span>
-        <input
-          id="addressInput"
-          class="address-input"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="Search or enter a URL..."
-        />
+        <input id="addressInput" class="address-input" autocomplete="off" spellcheck="false" placeholder="Search with DuckDuckGo or enter a URL..." />
         <button id="goBtn" class="go-btn">Go</button>
       </div>
 
       <div class="right-actions">
+        <button id="readerBtn" class="mode-btn">Reader</button>
+        <button id="browserBtn" class="mode-btn">Browser</button>
+        <button id="openBtn" class="mode-btn">Open</button>
         <button id="newTabBtn" class="tool-btn" title="New tab">＋</button>
         <button id="clearBtn" class="danger-btn" title="Clear memory">Clear</button>
       </div>
@@ -57,30 +46,10 @@
     <nav id="tabBar" class="tabbar"></nav>
 
     <main class="main">
-      <aside id="sidebar" class="sidebar">
-        <div class="panel-title-row">
-          <div>
-            <h2>Search</h2>
-            <p>Results are temporary and only kept in RAM.</p>
-          </div>
-        </div>
-
-        <div id="resultsList" class="results-list">
-          <div class="empty-state">
-            <div class="empty-icon">⌕</div>
-            <strong>No search yet</strong>
-            <span>Type anything in the top bar and press Enter.</span>
-          </div>
-        </div>
-      </aside>
-
       <section class="viewer">
         <div class="viewer-toolbar">
           <div id="statusText" class="status-pill">Ready.</div>
-
-          <button id="readerBtn" class="mode-btn">Reader</button>
-          <button id="browserBtn" class="mode-btn">Browser</button>
-          <button id="openBtn" class="mode-btn">Open</button>
+          <div class="toolbar-hint">Press ⛶ for focus mode.</div>
         </div>
 
         <div class="viewer-body">
@@ -91,38 +60,38 @@
 
           <section id="homeView" class="home-view">
             <div class="hero-card">
-              <div class="hero-badge">Private in-memory session</div>
-              <h1>Modern browser UI inside Codespaces.</h1>
+              <div class="hero-badge">◈ No sidebar. No tiny renderer.</div>
+              <h1>Big browser renderer for Codespaces.</h1>
               <p>
-                Search the web, open pages through a localhost preview, or use reader mode
-                for clean article text. The app does not write history, cache files, logs,
-                databases, localStorage, or cookies.
+                This version uses the whole screen for the page. Search results, reader mode,
+                and website preview all render here instead of being squeezed under a second panel.
               </p>
 
               <div class="feature-grid">
                 <div class="feature-card">
-                  <strong>Tabs</strong>
-                  <span>Temporary tabs, removed when cleared or stopped.</span>
+                  <strong>Big renderer</strong>
+                  <span>The browser area is now the main layout.</span>
                 </div>
                 <div class="feature-card">
-                  <strong>Reader</strong>
-                  <span>Clean text extraction for many public pages.</span>
+                  <strong>Focus button</strong>
+                  <span>Press the big ⛶ button to make it nearly fullscreen.</span>
                 </div>
                 <div class="feature-card">
-                  <strong>Browser preview</strong>
-                  <span>Localhost proxy preview for basic websites.</span>
+                  <strong>No duplicate search panel</strong>
+                  <span>Search results appear inside the main page only.</span>
                 </div>
               </div>
             </div>
           </section>
 
+          <section id="searchView" class="search-view"></section>
           <section id="readerView" class="reader-view"></section>
 
           <section id="browserView" class="browser-view">
             <iframe
               id="browserFrame"
               title="Browser preview"
-              sandbox="allow-scripts allow-forms allow-popups allow-modals"
+              sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin"
               referrerpolicy="no-referrer"
             ></iframe>
           </section>
@@ -131,6 +100,7 @@
     </main>
   </div>
 
+  <button id="focusBtn" class="focus-toggle" title="Fullscreen renderer">⛶</button>
   <div id="toast" class="toast"></div>
 
   <script src="/app.js"></script>

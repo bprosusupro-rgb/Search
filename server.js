@@ -12,7 +12,6 @@ const app = express();
 
 app.disable("x-powered-by");
 app.set("etag", false);
-
 app.use(express.json({ limit: "256kb" }));
 
 app.use((req, res, next) => {
@@ -26,9 +25,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, "public"), {
   etag: false,
   maxAge: 0,
-  setHeaders: (res) => {
-    res.setHeader("Cache-Control", "no-store");
-  }
+  setHeaders: (res) => res.setHeader("Cache-Control", "no-store")
 }));
 
 function cleanText(value = "") {
@@ -37,21 +34,13 @@ function cleanText(value = "") {
 
 function normalizeUrl(raw) {
   const value = cleanText(raw);
-
-  if (!value) {
-    throw new Error("Empty URL.");
-  }
-
-  if (value.startsWith("http://") || value.startsWith("https://")) {
-    return value;
-  }
-
+  if (!value) throw new Error("Empty URL.");
+  if (value.startsWith("http://") || value.startsWith("https://")) return value;
   return `https://${value}`;
 }
 
 function isBlockedHost(hostname) {
   const host = String(hostname || "").toLowerCase();
-
   if (!host) return true;
 
   if (
@@ -60,15 +49,12 @@ function isBlockedHost(hostname) {
     host === "127.0.0.1" ||
     host === "::1" ||
     host.endsWith(".local")
-  ) {
-    return true;
-  }
+  ) return true;
 
   const ipType = net.isIP(host);
 
   if (ipType === 4) {
     const parts = host.split(".").map(Number);
-
     if (parts[0] === 10) return true;
     if (parts[0] === 127) return true;
     if (parts[0] === 169 && parts[1] === 254) return true;
@@ -77,7 +63,7 @@ function isBlockedHost(hostname) {
   }
 
   if (ipType === 6) {
-    if (host === "::1") return true;
+    if (host.includes("::1")) return true;
     if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80")) return true;
   }
 
@@ -86,39 +72,24 @@ function isBlockedHost(hostname) {
 
 function safePublicUrl(raw) {
   const url = new URL(normalizeUrl(raw));
-
   if (!["http:", "https:"].includes(url.protocol)) {
     throw new Error("Only http and https URLs are allowed.");
   }
-
   if (isBlockedHost(url.hostname)) {
     throw new Error("Local/private network URLs are blocked.");
   }
-
   return url;
 }
 
 function unwrapDuckDuckGoUrl(href) {
   try {
     if (!href) return "";
-
     let urlText = href;
-
-    if (urlText.startsWith("//")) {
-      urlText = `https:${urlText}`;
-    }
-
-    if (urlText.startsWith("/")) {
-      urlText = `https://duckduckgo.com${urlText}`;
-    }
-
+    if (urlText.startsWith("//")) urlText = `https:${urlText}`;
+    if (urlText.startsWith("/")) urlText = `https://duckduckgo.com${urlText}`;
     const url = new URL(urlText);
-
     const uddg = url.searchParams.get("uddg");
-    if (uddg) {
-      return decodeURIComponent(uddg);
-    }
-
+    if (uddg) return decodeURIComponent(uddg);
     return url.href;
   } catch {
     return href || "";
@@ -129,7 +100,7 @@ async function fetchText(url, options = {}) {
   const response = await fetch(url, {
     redirect: "follow",
     headers: {
-      "User-Agent": "Mozilla/5.0 CodespaceBrowser/1.0 Chrome/124 Safari/537.36",
+      "User-Agent": "Mozilla/5.0 CodespaceBrowser/2.1 Chrome/124 Safari/537.36",
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
       ...options.headers
     },
@@ -152,13 +123,10 @@ async function fetchText(url, options = {}) {
 app.post("/api/search", async (req, res) => {
   try {
     const q = cleanText(req.body?.q || "");
-
-    if (!q) {
-      return res.status(400).json({ ok: false, error: "Search is empty." });
-    }
+    if (!q) return res.status(400).json({ ok: false, error: "Search is empty." });
 
     const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
-    const page = await fetchText(searchUrl, { timeoutMs: 15000 });
+    const page = await fetchText(searchUrl);
 
     if (!page.ok) {
       return res.status(502).json({
@@ -182,34 +150,21 @@ app.post("/api/search", async (req, res) => {
       const displayUrl = cleanText(urlEl.text()) || href;
 
       if (!title || !href || seen.has(href)) return;
-
       seen.add(href);
 
-      results.push({
-        title,
-        url: href,
-        displayUrl,
-        body
-      });
+      results.push({ title, url: href, displayUrl, body });
     });
 
-    res.json({
-      ok: true,
-      q,
-      results: results.slice(0, 15)
-    });
+    res.json({ ok: true, q, results: results.slice(0, 18) });
   } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message || String(error)
-    });
+    res.status(500).json({ ok: false, error: error.message || String(error) });
   }
 });
 
 app.post("/api/reader", async (req, res) => {
   try {
     const url = safePublicUrl(req.body?.url || "");
-    const page = await fetchText(url.href, { timeoutMs: 15000 });
+    const page = await fetchText(url.href);
 
     if (!page.ok) {
       return res.status(502).json({
@@ -226,7 +181,6 @@ app.post("/api/reader", async (req, res) => {
     }
 
     const $ = cheerio.load(page.text);
-
     $("script, style, noscript, svg, canvas, iframe, form, nav, footer, aside").remove();
 
     const title =
@@ -238,10 +192,8 @@ app.post("/api/reader", async (req, res) => {
 
     $("main article h1, main article h2, main article h3, main article p, main article li, article h1, article h2, article h3, article p, article li, h1, h2, h3, p, li").each((_, el) => {
       const text = cleanText($(el).text());
-
       if (text.length < 35) return;
       if (parts.includes(text)) return;
-
       parts.push(text);
     });
 
@@ -252,17 +204,14 @@ app.post("/api/reader", async (req, res) => {
       parts: parts.slice(0, 120)
     });
   } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message || String(error)
-    });
+    res.status(500).json({ ok: false, error: error.message || String(error) });
   }
 });
 
 app.get("/api/proxy", async (req, res) => {
   try {
     const url = safePublicUrl(req.query.url || "");
-    const page = await fetchText(url.href, { timeoutMs: 15000 });
+    const page = await fetchText(url.href);
 
     if (!page.ok) {
       return res.status(502).send(`Could not load page: ${page.status} ${page.statusText}`);
@@ -274,13 +223,9 @@ app.get("/api/proxy", async (req, res) => {
     }
 
     const $ = cheerio.load(page.text);
-
     $("meta[http-equiv='Content-Security-Policy']").remove();
 
-    if ($("head").length === 0) {
-      $("html").prepend("<head></head>");
-    }
-
+    if ($("head").length === 0) $("html").prepend("<head></head>");
     $("head").prepend(`<base href="${page.finalUrl || url.href}">`);
 
     $("body").append(`
@@ -289,10 +234,8 @@ app.get("/api/proxy", async (req, res) => {
   document.addEventListener("click", (event) => {
     const link = event.target.closest && event.target.closest("a[href]");
     if (!link) return;
-
     const href = link.href;
     if (!href) return;
-
     event.preventDefault();
     window.parent.postMessage({ type: "codespace-browser-navigate", url: href }, "*");
   }, true);
@@ -310,10 +253,9 @@ app.get("/api/proxy", async (req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log("");
   console.log("====================================================");
-  console.log(" Codespace GUI Browser running");
-  console.log(` Local URL: http://127.0.0.1:${PORT}`);
-  console.log(` Codespaces port: ${PORT}`);
-  console.log(" Open the forwarded port in the Ports tab.");
+  console.log(" Big Renderer Codespace Browser running");
+  console.log(` Open Codespaces forwarded port: ${PORT}`);
+  console.log(" Use the big bottom-right ⛶ button for focus/fullscreen mode.");
   console.log("====================================================");
   console.log("");
 });
