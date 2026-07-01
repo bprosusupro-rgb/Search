@@ -1,13 +1,19 @@
 {
-  "name": "Big Renderer Codespace Browser",
+  "name": "Real JS Codespace Browser",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
   "postCreateCommand": "npm install --no-package-lock",
   "forwardPorts": [7860],
   "portsAttributes": {
     "7860": {
-      "label": "Big Renderer Browser",
+      "label": "Real JS Browser",
       "onAutoForward": "openBrowser"
+    },
+    "5900": {
+      "label": "Wrong Port Helper - use 7860"
     }
+  },
+  "otherPortsAttributes": {
+    "onAutoForward": "silent"
   },
   "customizations": {
     "vscode": {

@@ -9,8 +9,10 @@ const els = {
   home: $("homeView"),
   search: $("searchView"),
   reader: $("readerView"),
-  browser: $("browserView"),
-  frame: $("browserFrame"),
+  proxy: $("proxyView"),
+  real: $("realView"),
+  proxyFrame: $("proxyFrame"),
+  realFrame: $("realFrame"),
   loader: $("loader"),
   toast: $("toast"),
   focusBtn: $("focusBtn")
@@ -33,7 +35,7 @@ function toast(message) {
   els.toast.textContent = message;
   els.toast.classList.add("visible");
   clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => els.toast.classList.remove("visible"), 2800);
+  toast._timer = setTimeout(() => els.toast.classList.remove("visible"), 3200);
 }
 
 function loading(value) {
@@ -125,11 +127,20 @@ function applySnapshot(tab, snapshot) {
   render();
 }
 
+function ensureRealFrame() {
+  if (!els.realFrame.src) {
+    els.realFrame.src = "/real.html";
+  }
+}
+
 function setMode(mode) {
   els.home.style.display = mode === "home" ? "grid" : "none";
   els.search.classList.toggle("visible", mode === "search");
   els.reader.classList.toggle("visible", mode === "reader");
-  els.browser.classList.toggle("visible", mode === "browser");
+  els.proxy.classList.toggle("visible", mode === "proxy");
+  els.real.classList.toggle("visible", mode === "real");
+
+  if (mode === "real") ensureRealFrame();
 }
 
 function render() {
@@ -148,7 +159,8 @@ function renderTabs() {
     icon.className = "tab-favicon";
     icon.textContent =
       tab.mode === "reader" ? "📄" :
-      tab.mode === "browser" ? "🌐" :
+      tab.mode === "real" ? "⚡" :
+      tab.mode === "proxy" ? "🌐" :
       tab.mode === "search" ? "⌕" :
       "◇";
 
@@ -188,11 +200,11 @@ function renderActive() {
   if (tab.mode === "search") renderSearchPage(tab);
   if (tab.mode === "reader") renderReader(tab.reader);
 
-  if (tab.mode === "browser" && tab.url) {
+  if (tab.mode === "proxy" && tab.url) {
     const proxyUrl = `/api/proxy?url=${encodeURIComponent(tab.url)}`;
-    if (els.frame.dataset.currentUrl !== tab.url) {
-      els.frame.dataset.currentUrl = tab.url;
-      els.frame.src = proxyUrl;
+    if (els.proxyFrame.dataset.currentUrl !== tab.url) {
+      els.proxyFrame.dataset.currentUrl = tab.url;
+      els.proxyFrame.src = proxyUrl;
     }
   }
 }
@@ -210,7 +222,7 @@ function renderSearchPage(tab) {
   h1.textContent = `Search: ${tab.url}`;
 
   const p = document.createElement("p");
-  p.textContent = "Results are shown in the big main renderer.";
+  p.textContent = "Click a result to open it in Real Chromium mode.";
 
   heading.appendChild(h1);
   heading.appendChild(p);
@@ -247,12 +259,20 @@ function renderSearchPage(tab) {
     const actions = document.createElement("div");
     actions.className = "result-actions";
 
-    const browserBtn = document.createElement("button");
-    browserBtn.className = "small-btn";
-    browserBtn.textContent = "Browser";
-    browserBtn.onclick = (event) => {
+    const realBtn = document.createElement("button");
+    realBtn.className = "small-btn";
+    realBtn.textContent = "Real";
+    realBtn.onclick = (event) => {
       event.stopPropagation();
-      openBrowser(result.url);
+      openReal(result.url);
+    };
+
+    const proxyBtn = document.createElement("button");
+    proxyBtn.className = "small-btn";
+    proxyBtn.textContent = "Proxy";
+    proxyBtn.onclick = (event) => {
+      event.stopPropagation();
+      openProxy(result.url);
     };
 
     const readerBtn = document.createElement("button");
@@ -271,11 +291,12 @@ function renderSearchPage(tab) {
       window.open(result.url, "_blank", "noopener,noreferrer");
     };
 
-    actions.appendChild(browserBtn);
+    actions.appendChild(realBtn);
+    actions.appendChild(proxyBtn);
     actions.appendChild(readerBtn);
     actions.appendChild(openBtn);
 
-    card.onclick = () => openBrowser(result.url);
+    card.onclick = () => openReal(result.url);
 
     card.appendChild(title);
     card.appendChild(url);
@@ -308,7 +329,7 @@ function renderReader(reader) {
 
   if (!reader.parts || !reader.parts.length) {
     const p = document.createElement("p");
-    p.textContent = "No readable text found. Try Browser or Open.";
+    p.textContent = "No readable text found. Try Real or Open.";
     card.appendChild(p);
   } else {
     for (const text of reader.parts) {
@@ -357,6 +378,64 @@ async function searchWeb(query, push = true) {
   }
 }
 
+async function openReal(rawUrl, push = true) {
+  const tab = activeTab();
+  if (!tab) return;
+
+  const url = normalizeUrl(rawUrl);
+  ensureRealFrame();
+
+  tab.title = hostFromUrl(url);
+  tab.url = url;
+  tab.mode = "real";
+  tab.reader = null;
+
+  if (push) pushHistory(tab, currentSnapshot(tab));
+  render();
+
+  loading(true);
+  els.status.textContent = "Opening in real Chromium...";
+
+  try {
+    const response = await fetch("/api/real/navigate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store"
+      },
+      body: JSON.stringify({ url })
+    });
+
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || "Real Chromium navigation failed.");
+
+    els.status.textContent = url;
+  } catch (error) {
+    toast(error.message);
+    els.status.textContent = "Real Chromium failed. Wait 2 seconds and press Real again.";
+  } finally {
+    loading(false);
+  }
+}
+
+function openProxy(rawUrl, push = true) {
+  const tab = activeTab();
+  if (!tab) return;
+
+  const url = normalizeUrl(rawUrl);
+
+  tab.title = hostFromUrl(url);
+  tab.url = url;
+  tab.mode = "proxy";
+  tab.reader = null;
+
+  els.proxyFrame.dataset.currentUrl = "";
+  els.proxyFrame.src = `/api/proxy?url=${encodeURIComponent(url)}`;
+
+  if (push) pushHistory(tab, currentSnapshot(tab));
+  render();
+}
+
 async function openReader(rawUrl, push = true) {
   const tab = activeTab();
   if (!tab) return;
@@ -391,35 +470,17 @@ async function openReader(rawUrl, push = true) {
     render();
   } catch (error) {
     toast(error.message);
-    els.status.textContent = "Reader failed. Try Browser or Open.";
+    els.status.textContent = "Reader failed. Try Real or Open.";
   } finally {
     loading(false);
   }
-}
-
-function openBrowser(rawUrl, push = true) {
-  const tab = activeTab();
-  if (!tab) return;
-
-  const url = normalizeUrl(rawUrl);
-
-  tab.title = hostFromUrl(url);
-  tab.url = url;
-  tab.mode = "browser";
-  tab.reader = null;
-
-  els.frame.dataset.currentUrl = "";
-  els.frame.src = `/api/proxy?url=${encodeURIComponent(url)}`;
-
-  if (push) pushHistory(tab, currentSnapshot(tab));
-  render();
 }
 
 function go() {
   const value = clean(els.address.value);
   if (!value) return;
 
-  if (isProbablyUrl(value)) openBrowser(value);
+  if (isProbablyUrl(value)) openReal(value);
   else searchWeb(value);
 }
 
@@ -432,8 +493,9 @@ function goHome(push = true) {
   tab.mode = "home";
   tab.results = [];
   tab.reader = null;
-  els.frame.removeAttribute("src");
-  els.frame.dataset.currentUrl = "";
+
+  els.proxyFrame.removeAttribute("src");
+  els.proxyFrame.dataset.currentUrl = "";
 
   if (push) pushHistory(tab, currentSnapshot(tab));
   render();
@@ -443,9 +505,11 @@ function reload() {
   const tab = activeTab();
   if (!tab) return;
 
-  if (tab.mode === "browser" && tab.url) {
-    els.frame.dataset.currentUrl = "";
-    els.frame.src = `/api/proxy?url=${encodeURIComponent(tab.url)}`;
+  if (tab.mode === "real" && tab.url) {
+    openReal(tab.url, false);
+  } else if (tab.mode === "proxy" && tab.url) {
+    els.proxyFrame.dataset.currentUrl = "";
+    els.proxyFrame.src = `/api/proxy?url=${encodeURIComponent(tab.url)}`;
   } else if (tab.mode === "reader" && tab.url) {
     openReader(tab.url, false);
   } else if (tab.mode === "search" && tab.url) {
@@ -468,11 +532,11 @@ function forward() {
 }
 
 function clearSession() {
-  els.frame.removeAttribute("src");
-  els.frame.dataset.currentUrl = "";
+  els.proxyFrame.removeAttribute("src");
+  els.proxyFrame.dataset.currentUrl = "";
   state.tabs = [];
   createTab();
-  toast("Temporary in-memory session cleared.");
+  toast("Temporary UI session cleared. Browser cookies reset on app restart.");
 }
 
 function toggleFocusMode() {
@@ -498,28 +562,48 @@ $("newTabBtn").onclick = createTab;
 $("clearBtn").onclick = clearSession;
 $("focusBtn").onclick = toggleFocusMode;
 
+$("realBtn").onclick = () => {
+  const tab = activeTab();
+  const value = clean(els.address.value || tab?.url || "");
+
+  if (!value || !isProbablyUrl(value)) {
+    ensureRealFrame();
+    tab.mode = "real";
+    render();
+    toast("Real Chromium opened. Use its address bar or enter a URL above.");
+    return;
+  }
+
+  openReal(value);
+};
+
+$("proxyBtn").onclick = () => {
+  const tab = activeTab();
+  const value = clean(els.address.value || tab?.url || "");
+
+  if (!value || !isProbablyUrl(value)) {
+    toast("Enter a URL first.");
+    return;
+  }
+
+  openProxy(value);
+};
+
 $("readerBtn").onclick = () => {
   const tab = activeTab();
   const value = clean(els.address.value || tab?.url || "");
-  if (!value || !isProbablyUrl(value)) {
-    toast("Enter a URL first.");
-    return;
-  }
-  openReader(value);
-};
 
-$("browserBtn").onclick = () => {
-  const tab = activeTab();
-  const value = clean(els.address.value || tab?.url || "");
   if (!value || !isProbablyUrl(value)) {
     toast("Enter a URL first.");
     return;
   }
-  openBrowser(value);
+
+  openReader(value);
 };
 
 $("openBtn").onclick = () => {
   const value = clean(els.address.value);
+
   if (!value) {
     toast("Enter a URL or search first.");
     return;
@@ -538,7 +622,7 @@ els.address.addEventListener("keydown", (event) => {
 
 window.addEventListener("message", (event) => {
   if (event.data?.type === "codespace-browser-navigate" && event.data.url) {
-    openBrowser(event.data.url);
+    openReal(event.data.url);
   }
 });
 
@@ -551,3 +635,8 @@ document.addEventListener("fullscreenchange", () => {
 });
 
 createTab();
+
+setTimeout(() => {
+  ensureRealFrame();
+  els.status.textContent = "Ready. URLs open in Real Chromium mode.";
+}, 1000);
