@@ -1,8 +1,154 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Patching CDP renderer to stop freezing on heavy pages..."
+
+pkill -f "node server.js" 2>/dev/null || true
+pkill -f "chromium" 2>/dev/null || true
+pkill -f "Xvfb" 2>/dev/null || true
+sleep 1
+
+if [ ! -f server.js ]; then
+  echo "ERROR: server.js not found."
+  exit 1
+fi
+
+if [ ! -f public/real.html ]; then
+  echo "ERROR: public/real.html not found."
+  exit 1
+fi
+
+cp server.js "server.js.backup-freeze-$(date +%s)"
+cp public/real.html "public/real.html.backup-freeze-$(date +%s)"
+
+node --input-type=commonjs <<'NODE'
+const fs = require("fs");
+
+let s = fs.readFileSync("server.js", "utf8");
+
+// Add streaming constants if missing
+if (!s.includes("const STREAM_MAX_WIDTH")) {
+  s = s.replace(
+    `const DISPLAY_NUM = ":99";`,
+    `const DISPLAY_NUM = ":99";
+
+const STREAM_MAX_WIDTH = 1280;
+const STREAM_MAX_HEIGHT = 760;
+const STREAM_JPEG_QUALITY = 48;
+const STREAM_EVERY_NTH_FRAME = 3;
+const STREAM_MIN_FRAME_INTERVAL_MS = 90;
+const CLIENT_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;`
+  );
+}
+
+// Make Chrome less likely to overload Codespaces
+if (!s.includes("--disable-gpu")) {
+  s = s.replace(
+    `"--no-first-run",`,
+    `"--disable-gpu",
+      "--disable-software-rasterizer",
+      "--disable-dev-shm-usage",
+      "--disable-renderer-backgrounding",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--no-first-run",`
+  );
+}
+
+// Replace startScreencast settings
+s = s.replace(
+  /await sendChrome\("Page\.startScreencast",\s*\{[\s\S]*?everyNthFrame:\s*\d+\s*\}\);/,
+  `try {
+        await sendChrome("Page.stopScreencast");
+      } catch {}
+
+      await sendChrome("Page.startScreencast", {
+        format: "jpeg",
+        quality: STREAM_JPEG_QUALITY,
+        maxWidth: STREAM_MAX_WIDTH,
+        maxHeight: STREAM_MAX_HEIGHT,
+        everyNthFrame: STREAM_EVERY_NTH_FRAME
+      });`
+);
+
+// Insert frame throttle variables in createCdpRenderer
+if (!s.includes("let lastFrameSentAt = 0;")) {
+  s = s.replace(
+    `let nextId = 1;
+  const pending = new Map();`,
+    `let nextId = 1;
+  let lastFrameSentAt = 0;
+  let rendererPaused = false;
+  let droppedFrames = 0;
+  const pending = new Map();`
+  );
+}
+
+// Replace screencast frame handler with throttled version
+s = s.replace(
+  /if \(msg\.method === "Page\.screencastFrame"\) \{[\s\S]*?try \{\s*await sendChrome\("Page\.screencastFrameAck", \{ sessionId \}\);\s*\} catch \{\}\s*\}/,
+  `if (msg.method === "Page.screencastFrame") {
+        const { data: imageData, metadata, sessionId } = msg.params;
+
+        const now = Date.now();
+        const clientTooFull = client.bufferedAmount > CLIENT_MAX_BUFFERED_BYTES;
+        const tooSoon = now - lastFrameSentAt < STREAM_MIN_FRAME_INTERVAL_MS;
+
+        if (!rendererPaused && !clientTooFull && !tooSoon && client.readyState === WebSocket.OPEN) {
+          lastFrameSentAt = now;
+
+          sendClient({
+            type: "frame",
+            image: imageData,
+            metadata,
+            droppedFrames
+          });
+
+          droppedFrames = 0;
+        } else {
+          droppedFrames++;
+        }
+
+        try {
+          chrome.send(JSON.stringify({
+            id: nextId++,
+            method: "Page.screencastFrameAck",
+            params: { sessionId }
+          }));
+        } catch {}
+      }`
+);
+
+// Add pause/resume renderer messages if missing
+if (!s.includes(`msg.type === "pauseRenderer"`)) {
+  s = s.replace(
+    `if (msg.type === "navigate") {`,
+    `if (msg.type === "pauseRenderer") {
+        rendererPaused = true;
+        return;
+      }
+
+      if (msg.type === "resumeRenderer") {
+        rendererPaused = false;
+        return;
+      }
+
+      if (msg.type === "navigate") {`
+  );
+}
+
+// More forgiving navigation timeout
+s = s.replace(/}, 10000\);/g, `}, 20000);`);
+
+fs.writeFileSync("server.js", s);
+NODE
+
+cat > public/real.html <<'EOF'
 <!doctype html>
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>YouTube Touch CDP Renderer</title>
+  <title>Stable CDP Touch Renderer</title>
   <style>
     :root { color-scheme: dark; }
 
@@ -106,7 +252,7 @@
       left: 14px;
       bottom: 14px;
       z-index: 25;
-      max-width: min(760px, calc(100vw - 28px));
+      max-width: min(680px, calc(100vw - 28px));
       padding: 10px 12px;
       border-radius: 16px;
       background: rgba(10, 14, 26, 0.74);
@@ -115,39 +261,6 @@
       border: 1px solid rgba(255,255,255,0.12);
       backdrop-filter: blur(14px);
       pointer-events: none;
-    }
-
-    #gestureOverlay {
-      position: fixed;
-      inset: 0;
-      z-index: 24;
-      display: none;
-      place-items: center;
-      pointer-events: none;
-      font: 900 clamp(32px, 8vw, 78px) system-ui, sans-serif;
-      color: white;
-      text-shadow: 0 8px 40px rgba(0,0,0,.8);
-    }
-
-    #gestureOverlay.visible {
-      display: grid;
-      animation: gesture-pop 520ms ease both;
-    }
-
-    #gestureOverlay.left {
-      place-items: center start;
-      padding-left: 16%;
-    }
-
-    #gestureOverlay.right {
-      place-items: center end;
-      padding-right: 16%;
-    }
-
-    @keyframes gesture-pop {
-      0% { opacity: 0; transform: scale(.86); }
-      15% { opacity: 1; transform: scale(1); }
-      100% { opacity: 0; transform: scale(1.08); }
     }
   </style>
 </head>
@@ -158,7 +271,7 @@
   <div id="status">Connecting to Chromium...</div>
 
   <div id="toolbar">
-    <button id="touchBtn" class="active">YT Touch</button>
+    <button id="touchBtn" class="active">Touch</button>
     <button id="mouseBtn">Mouse</button>
     <button id="keyboardBtn">Keyboard</button>
     <button id="backspaceBtn">⌫</button>
@@ -170,10 +283,8 @@
 
   <input id="keyboardBox" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
 
-  <div id="gestureOverlay"></div>
-
   <div id="hint">
-    YouTube touch mode: tap = click, double tap left/right = ±10s, double tap middle = play/pause, hold = 2× speed, drag = scroll.
+    Stable mode: lower FPS prevents freezing. Tap = touch/click, drag = touch drag, two fingers = scroll. Pause can help while loading heavy pages.
   </div>
 
   <script>
@@ -185,10 +296,9 @@
     const mouseBtn = document.getElementById("mouseBtn");
     const pauseBtn = document.getElementById("pauseBtn");
     const reconnectBtn = document.getElementById("reconnectBtn");
-    const gestureOverlay = document.getElementById("gestureOverlay");
 
     let ws;
-    let mode = "youtube-touch";
+    let mode = "touch";
     let paused = false;
     let drawing = false;
     let latestFrame = null;
@@ -201,12 +311,8 @@
     };
 
     let activePointers = new Map();
-    let primaryGesture = null;
     let lastTwoFinger = null;
-    let lastTapInfo = null;
-    let singleTapTimer = null;
-    let longPressTimer = null;
-    let longPressActive = false;
+    let lastTap = { time: 0, x: 0, y: 0 };
     let keyboardOpen = false;
 
     function setStatus(text, hide = false) {
@@ -221,34 +327,10 @@
       }
     }
 
-    function showGesture(text, side = "center") {
-      gestureOverlay.className = "";
-      gestureOverlay.textContent = text;
-
-      if (side === "left") gestureOverlay.classList.add("left");
-      if (side === "right") gestureOverlay.classList.add("right");
-
-      void gestureOverlay.offsetWidth;
-      gestureOverlay.classList.add("visible");
-
-      clearTimeout(showGesture.timer);
-      showGesture.timer = setTimeout(() => {
-        gestureOverlay.classList.remove("visible");
-      }, 560);
-    }
-
     function send(obj) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(obj));
       }
-    }
-
-    function youtubeAction(action, seconds = 0) {
-      send({
-        type: "youtubeAction",
-        action,
-        seconds
-      });
     }
 
     function connect() {
@@ -262,7 +344,7 @@
       ws = new WebSocket(`${protocol}//${location.host}/cdp-renderer`);
 
       ws.onopen = () => {
-        setStatus("Connected. YouTube touch controller active.", true);
+        setStatus("Connected to stable CDP renderer.", true);
         if (paused) send({ type: "pauseRenderer" });
       };
 
@@ -283,12 +365,6 @@
           setStatus(msg.error || "Renderer error.");
         }
 
-        if (msg.type === "youtubeActionResult") {
-          if (!msg.ok && msg.reason) {
-            setStatus(msg.reason, true);
-          }
-        }
-
         if (msg.type === "frame") {
           latestFrame = msg;
           scheduleDraw();
@@ -304,6 +380,7 @@
     function scheduleDraw() {
       if (drawing) return;
       drawing = true;
+
       requestAnimationFrame(drawLatestFrame);
     }
 
@@ -347,7 +424,7 @@
         frameCounter++;
 
         if (frameCounter % 30 === 0 && msg.droppedFrames) {
-          setStatus(`Stable renderer active. Dropped ${msg.droppedFrames} old frames.`, true);
+          setStatus(`Stable renderer active. Dropped ${msg.droppedFrames} old frames to avoid freezing.`, true);
         }
 
         drawing = false;
@@ -364,31 +441,16 @@
       img.src = `data:image/jpeg;base64,${msg.image}`;
     }
 
-    function remoteFromClientPoint(clientX, clientY) {
+    function pointFromEvent(event) {
       const rect = canvas.getBoundingClientRect();
 
-      const rx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const ry = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-
-      return {
-        x: Math.round(rx * (lastFrameMeta.deviceWidth || 1280)),
-        y: Math.round(ry * (lastFrameMeta.deviceHeight || 760)),
-        rx,
-        ry
-      };
-    }
-
-    function pointFromEvent(event) {
-      const p = remoteFromClientPoint(event.clientX, event.clientY);
+      const rx = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const ry = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
 
       return {
         id: event.pointerId || 1,
-        x: p.x,
-        y: p.y,
-        rx: p.rx,
-        ry: p.ry,
-        clientX: event.clientX,
-        clientY: event.clientY
+        x: Math.round(rx * (lastFrameMeta.deviceWidth || 1280)),
+        y: Math.round(ry * (lastFrameMeta.deviceHeight || 760))
       };
     }
 
@@ -407,75 +469,20 @@
       };
     }
 
-    function tapZone(point) {
-      if (point.rx < 0.35) return "left";
-      if (point.rx > 0.65) return "right";
-      return "center";
-    }
+    function remoteFromClientPoint(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
 
-    function clearLongPress() {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
+      const rx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const ry = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
 
-    function clearSingleTapTimer() {
-      clearTimeout(singleTapTimer);
-      singleTapTimer = null;
-    }
-
-    function sendNormalTap(point) {
-      send({
-        type: "tap",
-        x: point.x,
-        y: point.y
-      });
-    }
-
-    function handleDoubleTap(point) {
-      const zone = tapZone(point);
-
-      if (zone === "left") {
-        youtubeAction("seek", -10);
-        showGesture("⟲ 10", "left");
-        return;
-      }
-
-      if (zone === "right") {
-        youtubeAction("seek", 10);
-        showGesture("10 ⟳", "right");
-        return;
-      }
-
-      youtubeAction("togglePlay", 0);
-      showGesture("▶︎ / ❚❚", "center");
-    }
-
-    function startLongPressWatch(point) {
-      clearLongPress();
-
-      longPressTimer = setTimeout(() => {
-        if (!primaryGesture) return;
-        if (primaryGesture.moved) return;
-        if (activePointers.size !== 1) return;
-
-        longPressActive = true;
-        youtubeAction("speedStart", 0);
-        showGesture("2×", "center");
-      }, 520);
-    }
-
-    function finishLongPress() {
-      if (!longPressActive) return;
-
-      longPressActive = false;
-      youtubeAction("speedEnd", 0);
-      showGesture("1×", "center");
+      return {
+        x: Math.round(rx * (lastFrameMeta.deviceWidth || 1280)),
+        y: Math.round(ry * (lastFrameMeta.deviceHeight || 760))
+      };
     }
 
     canvas.addEventListener("pointerdown", (event) => {
       event.preventDefault();
-
-      if (event.target.closest && event.target.closest("#toolbar")) return;
 
       try {
         canvas.setPointerCapture(event.pointerId);
@@ -483,30 +490,23 @@
 
       const p = pointFromEvent(event);
 
-      activePointers.set(event.pointerId, p);
+      activePointers.set(event.pointerId, {
+        ...p,
+        clientX: event.clientX,
+        clientY: event.clientY
+      });
 
       if (activePointers.size >= 2) {
-        clearLongPress();
-        finishLongPress();
-        clearSingleTapTimer();
         lastTwoFinger = averageClient(Array.from(activePointers.values()));
         return;
       }
 
-      primaryGesture = {
-        id: event.pointerId,
-        start: p,
-        last: p,
-        startTime: performance.now(),
-        moved: false,
-        gestureType: "pending"
-      };
-
       if (mode === "mouse" || event.pointerType === "mouse") {
+        send({ type: "tap", x: p.x, y: p.y });
         return;
       }
 
-      startLongPressWatch(p);
+      send({ type: "touchStart", points: [p] });
     }, { passive: false });
 
     canvas.addEventListener("pointermove", (event) => {
@@ -515,14 +515,16 @@
       if (!activePointers.has(event.pointerId)) return;
 
       const p = pointFromEvent(event);
-      activePointers.set(event.pointerId, p);
+
+      activePointers.set(event.pointerId, {
+        ...p,
+        clientX: event.clientX,
+        clientY: event.clientY
+      });
 
       const all = Array.from(activePointers.values());
 
       if (all.length >= 2) {
-        clearLongPress();
-        finishLongPress();
-
         const now = averageClient(all);
         const remote = remoteFromClientPoint(now.x, now.y);
 
@@ -540,144 +542,43 @@
         return;
       }
 
-      if (!primaryGesture || primaryGesture.id !== event.pointerId) return;
-
-      const dx = p.clientX - primaryGesture.start.clientX;
-      const dy = p.clientY - primaryGesture.start.clientY;
-      const absX = Math.abs(dx);
-      const absY = Math.abs(dy);
-
-      if (absX > 8 || absY > 8) {
-        primaryGesture.moved = true;
-        clearLongPress();
+      if (mode === "touch" && event.pointerType !== "mouse") {
+        send({ type: "touchMove", points: [p] });
+      } else {
+        send({ type: "mouseMove", x: p.x, y: p.y });
       }
-
-      if (primaryGesture.gestureType === "pending" && (absX > 12 || absY > 12)) {
-        if (absY > absX * 1.15) {
-          primaryGesture.gestureType = "scroll";
-        } else {
-          primaryGesture.gestureType = "drag";
-          send({
-            type: "touchStart",
-            points: [
-              {
-                id: 1,
-                x: primaryGesture.start.x,
-                y: primaryGesture.start.y
-              }
-            ]
-          });
-        }
-      }
-
-      if (primaryGesture.gestureType === "scroll") {
-        const last = primaryGesture.last;
-
-        send({
-          type: "wheel",
-          x: p.x,
-          y: p.y,
-          deltaX: -(p.clientX - last.clientX) * 1.6,
-          deltaY: -(p.clientY - last.clientY) * 2.4
-        });
-      }
-
-      if (primaryGesture.gestureType === "drag") {
-        send({
-          type: "touchMove",
-          points: [
-            {
-              id: 1,
-              x: p.x,
-              y: p.y
-            }
-          ]
-        });
-      }
-
-      primaryGesture.last = p;
     }, { passive: false });
 
     canvas.addEventListener("pointerup", (event) => {
       event.preventDefault();
 
       const p = pointFromEvent(event);
-
       activePointers.delete(event.pointerId);
 
       if (activePointers.size === 0) {
         lastTwoFinger = null;
       }
 
-      clearLongPress();
-
-      if (longPressActive) {
-        finishLongPress();
-        primaryGesture = null;
-        return;
-      }
-
-      if (mode === "mouse" || event.pointerType === "mouse") {
-        sendNormalTap(p);
-        primaryGesture = null;
-        return;
-      }
-
-      if (primaryGesture && primaryGesture.gestureType === "drag") {
-        send({ type: "touchEnd" });
-        primaryGesture = null;
-        return;
-      }
-
       const now = performance.now();
-      const zone = tapZone(p);
-      const moved = primaryGesture?.moved || false;
+      const dx = Math.abs(p.x - lastTap.x);
+      const dy = Math.abs(p.y - lastTap.y);
+      const wasDoubleTapArea = now - lastTap.time < 450 && dx < 18 && dy < 18;
 
-      primaryGesture = null;
+      lastTap = { time: now, x: p.x, y: p.y };
 
-      if (moved) {
-        return;
+      if (mode === "touch" && event.pointerType !== "mouse") {
+        send({ type: "touchEnd" });
+
+        if (!wasDoubleTapArea) {
+          send({ type: "tap", x: p.x, y: p.y });
+        }
       }
-
-      if (
-        lastTapInfo &&
-        now - lastTapInfo.time < 360 &&
-        lastTapInfo.zone === zone &&
-        Math.abs(p.clientX - lastTapInfo.clientX) < 90 &&
-        Math.abs(p.clientY - lastTapInfo.clientY) < 90
-      ) {
-        clearSingleTapTimer();
-        handleDoubleTap(p);
-        lastTapInfo = null;
-        return;
-      }
-
-      lastTapInfo = {
-        time: now,
-        zone,
-        clientX: p.clientX,
-        clientY: p.clientY
-      };
-
-      clearSingleTapTimer();
-
-      singleTapTimer = setTimeout(() => {
-        sendNormalTap(p);
-        singleTapTimer = null;
-      }, 240);
     }, { passive: false });
 
     canvas.addEventListener("pointercancel", (event) => {
       event.preventDefault();
-
-      clearLongPress();
-      finishLongPress();
-      clearSingleTapTimer();
-
       activePointers.clear();
-      primaryGesture = null;
       lastTwoFinger = null;
-
       send({ type: "touchEnd" });
     }, { passive: false });
 
@@ -702,7 +603,7 @@
       if (keyboardOpen) {
         keyboardBox.value = "";
         keyboardBox.focus();
-        setStatus("Keyboard open. Tap a field first, then type here.", true);
+        setStatus("Keyboard open. Text is inserted into the focused Chromium field.", true);
       } else {
         keyboardBox.blur();
       }
@@ -722,10 +623,7 @@
       const normalized = value.replace(/\n/g, "");
 
       if (normalized) {
-        send({
-          type: "insertText",
-          text: normalized
-        });
+        send({ type: "insertText", text: normalized });
       }
 
       keyboardBox.value = "";
@@ -789,10 +687,10 @@
     };
 
     touchBtn.onclick = () => {
-      mode = "youtube-touch";
+      mode = "touch";
       touchBtn.classList.add("active");
       mouseBtn.classList.remove("active");
-      setStatus("YouTube-style touch mode active.", true);
+      setStatus("Touch mode active.", true);
     };
 
     mouseBtn.onclick = () => {
@@ -811,3 +709,13 @@
   </script>
 </body>
 </html>
+EOF
+
+npm install --no-package-lock
+
+echo ""
+echo "Starting stable renderer..."
+echo "Open port 7860 again."
+echo ""
+
+PORT=7860 npm start

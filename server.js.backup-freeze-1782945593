@@ -16,13 +16,6 @@ const PORT = Number(process.env.PORT || 7860);
 const CDP_PORT = 45992;
 const DISPLAY_NUM = ":99";
 
-const STREAM_MAX_WIDTH = 1280;
-const STREAM_MAX_HEIGHT = 760;
-const STREAM_JPEG_QUALITY = 48;
-const STREAM_EVERY_NTH_FRAME = 3;
-const STREAM_MIN_FRAME_INTERVAL_MS = 90;
-const CLIENT_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
-
 const GERMANY_BROWSER_LOCATION = {
   locale: "de-DE",
   acceptLanguage: "de-DE,de;q=0.9,en-US;q=0.6,en;q=0.5",
@@ -192,12 +185,6 @@ function startChrome() {
       "--remote-debugging-address=127.0.0.1",
       "--lang=de-DE",
       `--accept-lang=${GERMANY_BROWSER_LOCATION.acceptLanguage}`,
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--disable-dev-shm-usage",
-      "--disable-renderer-backgrounding",
-      "--disable-background-timer-throttling",
-      "--disable-backgrounding-occluded-windows",
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-sync",
@@ -321,9 +308,6 @@ async function configureTouch() {
 function createCdpRenderer(client) {
   let chrome = null;
   let nextId = 1;
-  let lastFrameSentAt = 0;
-  let rendererPaused = false;
-  let droppedFrames = 0;
   const pending = new Map();
 
   const sendClient = (obj) => {
@@ -346,7 +330,7 @@ function createCdpRenderer(client) {
           pending.delete(id);
           reject(new Error(`CDP command timed out: ${method}`));
         }
-      }, 20000);
+      }, 10000);
     });
   };
 
@@ -423,16 +407,12 @@ function createCdpRenderer(client) {
       // GERMANY_LOCATION_RENDERER_PATCH
       await configureGermanyLocation(sendChrome);
 
-      try {
-        await sendChrome("Page.stopScreencast");
-      } catch {}
-
       await sendChrome("Page.startScreencast", {
         format: "jpeg",
-        quality: STREAM_JPEG_QUALITY,
-        maxWidth: STREAM_MAX_WIDTH,
-        maxHeight: STREAM_MAX_HEIGHT,
-        everyNthFrame: STREAM_EVERY_NTH_FRAME
+        quality: 70,
+        maxWidth: 1500,
+        maxHeight: 950,
+        everyNthFrame: 1
       });
 
       sendClient({ type: "ready" });
@@ -458,31 +438,14 @@ function createCdpRenderer(client) {
       if (msg.method === "Page.screencastFrame") {
         const { data: imageData, metadata, sessionId } = msg.params;
 
-        const now = Date.now();
-        const clientTooFull = client.bufferedAmount > CLIENT_MAX_BUFFERED_BYTES;
-        const tooSoon = now - lastFrameSentAt < STREAM_MIN_FRAME_INTERVAL_MS;
-
-        if (!rendererPaused && !clientTooFull && !tooSoon && client.readyState === WebSocket.OPEN) {
-          lastFrameSentAt = now;
-
-          sendClient({
-            type: "frame",
-            image: imageData,
-            metadata,
-            droppedFrames
-          });
-
-          droppedFrames = 0;
-        } else {
-          droppedFrames++;
-        }
+        sendClient({
+          type: "frame",
+          image: imageData,
+          metadata
+        });
 
         try {
-          chrome.send(JSON.stringify({
-            id: nextId++,
-            method: "Page.screencastFrameAck",
-            params: { sessionId }
-          }));
+          await sendChrome("Page.screencastFrameAck", { sessionId });
         } catch {}
       }
     });
@@ -501,16 +464,6 @@ function createCdpRenderer(client) {
   client.on("message", async (data) => {
     try {
       const msg = JSON.parse(String(data));
-
-      if (msg.type === "pauseRenderer") {
-        rendererPaused = true;
-        return;
-      }
-
-      if (msg.type === "resumeRenderer") {
-        rendererPaused = false;
-        return;
-      }
 
       if (msg.type === "navigate") {
         const url = safePublicUrl(msg.url);
@@ -574,61 +527,6 @@ function createCdpRenderer(client) {
           button: "none",
           buttons: 0
         });
-        return;
-      }
-
-      
-      if (msg.type === "youtubeAction") {
-        const ytAction = String(msg.action || "");
-        const ytSeconds = Number(msg.seconds || 0);
-
-        const expr =
-          "(() => {" +
-          "  const action = " + JSON.stringify(ytAction) + ";" +
-          "  const seconds = " + JSON.stringify(Number.isFinite(ytSeconds) ? ytSeconds : 0) + ";" +
-          "  const host = String(location.hostname || '').toLowerCase();" +
-          "  const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be' || host.endsWith('.youtu.be');" +
-          "  const video = document.querySelector('video');" +
-          "  if (!isYouTube || !video) return { ok: false, reason: 'Not on YouTube video page.' };" +
-          "  if (action === 'seek') {" +
-          "    const duration = Number.isFinite(video.duration) ? video.duration : 999999;" +
-          "    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + seconds));" +
-          "    return { ok: true, action, seconds, currentTime: video.currentTime };" +
-          "  }" +
-          "  if (action === 'togglePlay') {" +
-          "    if (video.paused) { video.play(); return { ok: true, action, playing: true }; }" +
-          "    video.pause(); return { ok: true, action, playing: false };" +
-          "  }" +
-          "  if (action === 'speedStart') {" +
-          "    if (!window.__codespaceOldPlaybackRate) window.__codespaceOldPlaybackRate = video.playbackRate || 1;" +
-          "    video.playbackRate = 2;" +
-          "    return { ok: true, action, playbackRate: video.playbackRate };" +
-          "  }" +
-          "  if (action === 'speedEnd') {" +
-          "    video.playbackRate = window.__codespaceOldPlaybackRate || 1;" +
-          "    window.__codespaceOldPlaybackRate = null;" +
-          "    return { ok: true, action, playbackRate: video.playbackRate };" +
-          "  }" +
-          "  if (action === 'mute') {" +
-          "    video.muted = !video.muted;" +
-          "    return { ok: true, action, muted: video.muted };" +
-          "  }" +
-          "  return { ok: false, reason: 'Unknown YouTube action.' };" +
-          "})()";
-
-        const result = await sendChrome("Runtime.evaluate", {
-          expression: expr,
-          returnByValue: true,
-          awaitPromise: true
-        });
-
-        const value = result?.result?.value || {};
-        sendClient({
-          type: "youtubeActionResult",
-          action: ytAction,
-          ...value
-        });
-
         return;
       }
 

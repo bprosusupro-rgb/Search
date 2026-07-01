@@ -1,3 +1,113 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Installing YouTube-style touch controller..."
+
+pkill -f "node server.js" 2>/dev/null || true
+pkill -f "chromium" 2>/dev/null || true
+pkill -f "Xvfb" 2>/dev/null || true
+sleep 1
+
+if [ ! -f server.js ]; then
+  echo "ERROR: server.js not found."
+  exit 1
+fi
+
+if [ ! -f public/real.html ]; then
+  echo "ERROR: public/real.html not found."
+  exit 1
+fi
+
+cp server.js "server.js.backup-youtube-touch-$(date +%s)"
+cp public/real.html "public/real.html.backup-youtube-touch-$(date +%s)"
+
+node --input-type=commonjs <<'NODE'
+const fs = require("fs");
+
+let s = fs.readFileSync("server.js", "utf8");
+
+if (!s.includes('msg.type === "youtubeAction"')) {
+  const youtubeActionBlock = `
+      if (msg.type === "youtubeAction") {
+        const ytAction = String(msg.action || "");
+        const ytSeconds = Number(msg.seconds || 0);
+
+        const expr =
+          "(() => {" +
+          "  const action = " + JSON.stringify(ytAction) + ";" +
+          "  const seconds = " + JSON.stringify(Number.isFinite(ytSeconds) ? ytSeconds : 0) + ";" +
+          "  const host = String(location.hostname || '').toLowerCase();" +
+          "  const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be' || host.endsWith('.youtu.be');" +
+          "  const video = document.querySelector('video');" +
+          "  if (!isYouTube || !video) return { ok: false, reason: 'Not on YouTube video page.' };" +
+          "  if (action === 'seek') {" +
+          "    const duration = Number.isFinite(video.duration) ? video.duration : 999999;" +
+          "    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + seconds));" +
+          "    return { ok: true, action, seconds, currentTime: video.currentTime };" +
+          "  }" +
+          "  if (action === 'togglePlay') {" +
+          "    if (video.paused) { video.play(); return { ok: true, action, playing: true }; }" +
+          "    video.pause(); return { ok: true, action, playing: false };" +
+          "  }" +
+          "  if (action === 'speedStart') {" +
+          "    if (!window.__codespaceOldPlaybackRate) window.__codespaceOldPlaybackRate = video.playbackRate || 1;" +
+          "    video.playbackRate = 2;" +
+          "    return { ok: true, action, playbackRate: video.playbackRate };" +
+          "  }" +
+          "  if (action === 'speedEnd') {" +
+          "    video.playbackRate = window.__codespaceOldPlaybackRate || 1;" +
+          "    window.__codespaceOldPlaybackRate = null;" +
+          "    return { ok: true, action, playbackRate: video.playbackRate };" +
+          "  }" +
+          "  if (action === 'mute') {" +
+          "    video.muted = !video.muted;" +
+          "    return { ok: true, action, muted: video.muted };" +
+          "  }" +
+          "  return { ok: false, reason: 'Unknown YouTube action.' };" +
+          "})()";
+
+        const result = await sendChrome("Runtime.evaluate", {
+          expression: expr,
+          returnByValue: true,
+          awaitPromise: true
+        });
+
+        const value = result?.result?.value || {};
+        sendClient({
+          type: "youtubeActionResult",
+          action: ytAction,
+          ...value
+        });
+
+        return;
+      }
+
+`;
+
+  const needle = `if (msg.type === "insertText") {`;
+
+  if (!s.includes(needle)) {
+    console.error("Could not find insertText handler in server.js. Your server.js is not the expected CDP version.");
+    process.exit(1);
+  }
+
+  s = s.replace(needle, youtubeActionBlock + `      ` + needle);
+}
+
+if (!s.includes("--touch-events=enabled")) {
+  s = s.replace(
+    `"--autoplay-policy=no-user-gesture-required",`,
+    `"--autoplay-policy=no-user-gesture-required",
+      "--touch-events=enabled",
+      "--enable-pinch",
+      "--overscroll-history-navigation=0",`
+  );
+}
+
+fs.writeFileSync("server.js", s);
+NODE
+
+cat > public/real.html <<'EOF'
 <!doctype html>
 <html>
 <head>
@@ -811,3 +921,13 @@
   </script>
 </body>
 </html>
+EOF
+
+npm install --no-package-lock
+
+echo ""
+echo "Starting YouTube-style touch browser..."
+echo "Open port 7860 again."
+echo ""
+
+PORT=7860 npm start

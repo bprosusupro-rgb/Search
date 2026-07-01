@@ -1,9 +1,8 @@
 {
-  "name": "codespace-real-js-browser",
-  "version": "3.0.0",
+  "name": "codespace-cdp-touch-browser",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
-  "description": "Big renderer browser UI with real Chromium engine for JavaScript-heavy sites.",
   "scripts": {
     "start": "node server.js"
   },

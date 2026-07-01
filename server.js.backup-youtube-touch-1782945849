@@ -577,61 +577,6 @@ function createCdpRenderer(client) {
         return;
       }
 
-      
-      if (msg.type === "youtubeAction") {
-        const ytAction = String(msg.action || "");
-        const ytSeconds = Number(msg.seconds || 0);
-
-        const expr =
-          "(() => {" +
-          "  const action = " + JSON.stringify(ytAction) + ";" +
-          "  const seconds = " + JSON.stringify(Number.isFinite(ytSeconds) ? ytSeconds : 0) + ";" +
-          "  const host = String(location.hostname || '').toLowerCase();" +
-          "  const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be' || host.endsWith('.youtu.be');" +
-          "  const video = document.querySelector('video');" +
-          "  if (!isYouTube || !video) return { ok: false, reason: 'Not on YouTube video page.' };" +
-          "  if (action === 'seek') {" +
-          "    const duration = Number.isFinite(video.duration) ? video.duration : 999999;" +
-          "    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + seconds));" +
-          "    return { ok: true, action, seconds, currentTime: video.currentTime };" +
-          "  }" +
-          "  if (action === 'togglePlay') {" +
-          "    if (video.paused) { video.play(); return { ok: true, action, playing: true }; }" +
-          "    video.pause(); return { ok: true, action, playing: false };" +
-          "  }" +
-          "  if (action === 'speedStart') {" +
-          "    if (!window.__codespaceOldPlaybackRate) window.__codespaceOldPlaybackRate = video.playbackRate || 1;" +
-          "    video.playbackRate = 2;" +
-          "    return { ok: true, action, playbackRate: video.playbackRate };" +
-          "  }" +
-          "  if (action === 'speedEnd') {" +
-          "    video.playbackRate = window.__codespaceOldPlaybackRate || 1;" +
-          "    window.__codespaceOldPlaybackRate = null;" +
-          "    return { ok: true, action, playbackRate: video.playbackRate };" +
-          "  }" +
-          "  if (action === 'mute') {" +
-          "    video.muted = !video.muted;" +
-          "    return { ok: true, action, muted: video.muted };" +
-          "  }" +
-          "  return { ok: false, reason: 'Unknown YouTube action.' };" +
-          "})()";
-
-        const result = await sendChrome("Runtime.evaluate", {
-          expression: expr,
-          returnByValue: true,
-          awaitPromise: true
-        });
-
-        const value = result?.result?.value || {};
-        sendClient({
-          type: "youtubeActionResult",
-          action: ytAction,
-          ...value
-        });
-
-        return;
-      }
-
       if (msg.type === "insertText") {
         await sendChrome("Input.insertText", { text: String(msg.text || "") });
         return;

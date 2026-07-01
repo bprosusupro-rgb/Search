@@ -1,3 +1,45 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Installing CDP touch + keyboard browser..."
+
+pkill -f "node server.js" 2>/dev/null || true
+pkill -f "chromium" 2>/dev/null || true
+pkill -f "Xvfb" 2>/dev/null || true
+pkill -f "x11vnc" 2>/dev/null || true
+pkill -f "websockify" 2>/dev/null || true
+sleep 1
+
+sudo apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  chromium \
+  xvfb \
+  fluxbox \
+  ca-certificates \
+  fonts-liberation \
+  fonts-noto-color-emoji \
+  xdg-utils
+
+mkdir -p public .devcontainer
+
+cat > package.json <<'EOF'
+{
+  "name": "codespace-cdp-touch-browser",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}
+EOF
+
+cat > server.js <<'EOF'
 import express from "express";
 import * as cheerio from "cheerio";
 import path from "node:path";
@@ -15,22 +57,6 @@ const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT || 7860);
 const CDP_PORT = 45992;
 const DISPLAY_NUM = ":99";
-
-const STREAM_MAX_WIDTH = 1280;
-const STREAM_MAX_HEIGHT = 760;
-const STREAM_JPEG_QUALITY = 48;
-const STREAM_EVERY_NTH_FRAME = 3;
-const STREAM_MIN_FRAME_INTERVAL_MS = 90;
-const CLIENT_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
-
-const GERMANY_BROWSER_LOCATION = {
-  locale: "de-DE",
-  acceptLanguage: "de-DE,de;q=0.9,en-US;q=0.6,en;q=0.5",
-  timezone: "Europe/Berlin",
-  latitude: 52.520008,
-  longitude: 13.404954,
-  accuracy: 50
-};
 
 const app = express();
 const server = createServer(app);
@@ -161,9 +187,6 @@ function startChrome() {
   const env = {
     DISPLAY: DISPLAY_NUM,
     HOME: homeDir,
-    TZ: GERMANY_BROWSER_LOCATION.timezone,
-    LANG: "de_DE.UTF-8",
-    LANGUAGE: "de_DE:de",
     XDG_CACHE_HOME: path.join(tempRoot, "xdg-cache"),
     XDG_CONFIG_HOME: path.join(tempRoot, "xdg-config"),
     XDG_RUNTIME_DIR: runtimeDir
@@ -190,14 +213,6 @@ function startChrome() {
       `--media-cache-dir=${mediaCacheDir}`,
       `--remote-debugging-port=${CDP_PORT}`,
       "--remote-debugging-address=127.0.0.1",
-      "--lang=de-DE",
-      `--accept-lang=${GERMANY_BROWSER_LOCATION.acceptLanguage}`,
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--disable-dev-shm-usage",
-      "--disable-renderer-backgrounding",
-      "--disable-background-timer-throttling",
-      "--disable-backgrounding-occluded-windows",
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-sync",
@@ -278,35 +293,6 @@ async function oneShotCdp(method, params = {}) {
   });
 }
 
-
-async function configureGermanyLocation(sendCommand = oneShotCdp) {
-  try {
-    await sendCommand("Emulation.setTimezoneOverride", {
-      timezoneId: GERMANY_BROWSER_LOCATION.timezone
-    });
-  } catch {}
-
-  try {
-    await sendCommand("Emulation.setLocaleOverride", {
-      locale: GERMANY_BROWSER_LOCATION.locale
-    });
-  } catch {}
-
-  try {
-    await sendCommand("Emulation.setGeolocationOverride", {
-      latitude: GERMANY_BROWSER_LOCATION.latitude,
-      longitude: GERMANY_BROWSER_LOCATION.longitude,
-      accuracy: GERMANY_BROWSER_LOCATION.accuracy
-    });
-  } catch {}
-
-  try {
-    await sendCommand("Browser.grantPermissions", {
-      permissions: ["geolocation"]
-    });
-  } catch {}
-}
-
 async function configureTouch() {
   try {
     await oneShotCdp("Emulation.setTouchEmulationEnabled", {
@@ -314,16 +300,11 @@ async function configureTouch() {
       maxTouchPoints: 5
     });
   } catch {}
-
-  await configureGermanyLocation(oneShotCdp);
 }
 
 function createCdpRenderer(client) {
   let chrome = null;
   let nextId = 1;
-  let lastFrameSentAt = 0;
-  let rendererPaused = false;
-  let droppedFrames = 0;
   const pending = new Map();
 
   const sendClient = (obj) => {
@@ -346,7 +327,7 @@ function createCdpRenderer(client) {
           pending.delete(id);
           reject(new Error(`CDP command timed out: ${method}`));
         }
-      }, 20000);
+      }, 10000);
     });
   };
 
@@ -420,19 +401,12 @@ function createCdpRenderer(client) {
         maxTouchPoints: 5
       });
 
-      // GERMANY_LOCATION_RENDERER_PATCH
-      await configureGermanyLocation(sendChrome);
-
-      try {
-        await sendChrome("Page.stopScreencast");
-      } catch {}
-
       await sendChrome("Page.startScreencast", {
         format: "jpeg",
-        quality: STREAM_JPEG_QUALITY,
-        maxWidth: STREAM_MAX_WIDTH,
-        maxHeight: STREAM_MAX_HEIGHT,
-        everyNthFrame: STREAM_EVERY_NTH_FRAME
+        quality: 70,
+        maxWidth: 1500,
+        maxHeight: 950,
+        everyNthFrame: 1
       });
 
       sendClient({ type: "ready" });
@@ -458,31 +432,14 @@ function createCdpRenderer(client) {
       if (msg.method === "Page.screencastFrame") {
         const { data: imageData, metadata, sessionId } = msg.params;
 
-        const now = Date.now();
-        const clientTooFull = client.bufferedAmount > CLIENT_MAX_BUFFERED_BYTES;
-        const tooSoon = now - lastFrameSentAt < STREAM_MIN_FRAME_INTERVAL_MS;
-
-        if (!rendererPaused && !clientTooFull && !tooSoon && client.readyState === WebSocket.OPEN) {
-          lastFrameSentAt = now;
-
-          sendClient({
-            type: "frame",
-            image: imageData,
-            metadata,
-            droppedFrames
-          });
-
-          droppedFrames = 0;
-        } else {
-          droppedFrames++;
-        }
+        sendClient({
+          type: "frame",
+          image: imageData,
+          metadata
+        });
 
         try {
-          chrome.send(JSON.stringify({
-            id: nextId++,
-            method: "Page.screencastFrameAck",
-            params: { sessionId }
-          }));
+          await sendChrome("Page.screencastFrameAck", { sessionId });
         } catch {}
       }
     });
@@ -501,16 +458,6 @@ function createCdpRenderer(client) {
   client.on("message", async (data) => {
     try {
       const msg = JSON.parse(String(data));
-
-      if (msg.type === "pauseRenderer") {
-        rendererPaused = true;
-        return;
-      }
-
-      if (msg.type === "resumeRenderer") {
-        rendererPaused = false;
-        return;
-      }
 
       if (msg.type === "navigate") {
         const url = safePublicUrl(msg.url);
@@ -577,61 +524,6 @@ function createCdpRenderer(client) {
         return;
       }
 
-      
-      if (msg.type === "youtubeAction") {
-        const ytAction = String(msg.action || "");
-        const ytSeconds = Number(msg.seconds || 0);
-
-        const expr =
-          "(() => {" +
-          "  const action = " + JSON.stringify(ytAction) + ";" +
-          "  const seconds = " + JSON.stringify(Number.isFinite(ytSeconds) ? ytSeconds : 0) + ";" +
-          "  const host = String(location.hostname || '').toLowerCase();" +
-          "  const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be' || host.endsWith('.youtu.be');" +
-          "  const video = document.querySelector('video');" +
-          "  if (!isYouTube || !video) return { ok: false, reason: 'Not on YouTube video page.' };" +
-          "  if (action === 'seek') {" +
-          "    const duration = Number.isFinite(video.duration) ? video.duration : 999999;" +
-          "    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + seconds));" +
-          "    return { ok: true, action, seconds, currentTime: video.currentTime };" +
-          "  }" +
-          "  if (action === 'togglePlay') {" +
-          "    if (video.paused) { video.play(); return { ok: true, action, playing: true }; }" +
-          "    video.pause(); return { ok: true, action, playing: false };" +
-          "  }" +
-          "  if (action === 'speedStart') {" +
-          "    if (!window.__codespaceOldPlaybackRate) window.__codespaceOldPlaybackRate = video.playbackRate || 1;" +
-          "    video.playbackRate = 2;" +
-          "    return { ok: true, action, playbackRate: video.playbackRate };" +
-          "  }" +
-          "  if (action === 'speedEnd') {" +
-          "    video.playbackRate = window.__codespaceOldPlaybackRate || 1;" +
-          "    window.__codespaceOldPlaybackRate = null;" +
-          "    return { ok: true, action, playbackRate: video.playbackRate };" +
-          "  }" +
-          "  if (action === 'mute') {" +
-          "    video.muted = !video.muted;" +
-          "    return { ok: true, action, muted: video.muted };" +
-          "  }" +
-          "  return { ok: false, reason: 'Unknown YouTube action.' };" +
-          "})()";
-
-        const result = await sendChrome("Runtime.evaluate", {
-          expression: expr,
-          returnByValue: true,
-          awaitPromise: true
-        });
-
-        const value = result?.result?.value || {};
-        sendClient({
-          type: "youtubeActionResult",
-          action: ytAction,
-          ...value
-        });
-
-        return;
-      }
-
       if (msg.type === "insertText") {
         await sendChrome("Input.insertText", { text: String(msg.text || "") });
         return;
@@ -686,7 +578,6 @@ async function fetchText(url, options = {}) {
     headers: {
       "User-Agent": "Mozilla/5.0 CodespaceBrowser/4.0 Chrome/124 Safari/537.36",
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
-      "Accept-Language": GERMANY_BROWSER_LOCATION.acceptLanguage,
       ...options.headers
     },
     signal: AbortSignal.timeout(options.timeoutMs || 15000)
@@ -713,29 +604,6 @@ app.post("/api/real/navigate", async (req, res) => {
     res.json({ ok: true, url: url.href });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || String(error) });
-  }
-});
-
-app.get("/api/germany-location-test", async (req, res) => {
-  try {
-    await configureGermanyLocation(oneShotCdp);
-
-    const result = await oneShotCdp("Runtime.evaluate", {
-      expression: "({ language: navigator.language, languages: navigator.languages, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, href: location.href })",
-      returnByValue: true
-    });
-
-    res.json({
-      ok: true,
-      intended_location: "Germany / Berlin",
-      note: "This changes browser locale/timezone/geolocation signals, not GitHub Codespaces' real IP.",
-      chromium_reported: result?.result?.value || null
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message || String(error)
-    });
   }
 });
 
@@ -864,3 +732,652 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log("====================================================");
   console.log("");
 });
+EOF
+
+cat > public/real.html <<'EOF'
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>CDP Touch Renderer</title>
+  <style>
+    :root { color-scheme: dark; }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #05070d;
+      touch-action: none;
+      overscroll-behavior: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    body {
+      position: fixed;
+      inset: 0;
+    }
+
+    #canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #05070d;
+      touch-action: none;
+    }
+
+    #status {
+      position: fixed;
+      left: 14px;
+      top: 14px;
+      z-index: 20;
+      padding: 10px 13px;
+      border-radius: 999px;
+      background: rgba(10, 14, 26, 0.88);
+      color: white;
+      font: 13px system-ui, sans-serif;
+      border: 1px solid rgba(255,255,255,0.15);
+      pointer-events: none;
+    }
+
+    #toolbar {
+      position: fixed;
+      right: 12px;
+      top: 12px;
+      z-index: 30;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px;
+      border-radius: 18px;
+      background: rgba(10, 14, 26, 0.76);
+      border: 1px solid rgba(255,255,255,0.14);
+      backdrop-filter: blur(14px);
+    }
+
+    button {
+      border: 1px solid rgba(255,255,255,0.18);
+      color: white;
+      background: rgba(255,255,255,0.09);
+      border-radius: 13px;
+      padding: 9px 11px;
+      font: 800 12px system-ui, sans-serif;
+    }
+
+    button.active {
+      border: 0;
+      background: linear-gradient(135deg, #7c5cff, #00d4ff);
+    }
+
+    #keyboardBox {
+      position: fixed;
+      left: 14px;
+      right: 14px;
+      bottom: 14px;
+      z-index: 35;
+      height: 54px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(10, 14, 26, 0.92);
+      color: white;
+      padding: 0 16px;
+      font: 18px system-ui, sans-serif;
+      outline: none;
+      display: none;
+    }
+
+    #keyboardBox.visible {
+      display: block;
+    }
+
+    #hint {
+      position: fixed;
+      left: 14px;
+      bottom: 14px;
+      z-index: 25;
+      max-width: min(620px, calc(100vw - 28px));
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(10, 14, 26, 0.74);
+      color: rgba(255,255,255,0.78);
+      font: 12px/1.4 system-ui, sans-serif;
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(14px);
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="status">Connecting to Chromium...</div>
+
+  <div id="toolbar">
+    <button id="touchBtn" class="active">Touch</button>
+    <button id="mouseBtn">Mouse</button>
+    <button id="keyboardBtn">Keyboard</button>
+    <button id="backspaceBtn">⌫</button>
+    <button id="enterBtn">Enter</button>
+    <button id="reloadBtn">↻</button>
+  </div>
+
+  <input id="keyboardBox" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+
+  <div id="hint">
+    Tap = real touch/click. Drag = touch drag. Two fingers = scroll. Tap a field, then Keyboard, then type.
+  </div>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const keyboardBox = document.getElementById("keyboardBox");
+    const touchBtn = document.getElementById("touchBtn");
+    const mouseBtn = document.getElementById("mouseBtn");
+
+    let ws;
+    let mode = "touch";
+    let lastFrameMeta = { deviceWidth: 1500, deviceHeight: 950 };
+    let activePointers = new Map();
+    let lastTwoFinger = null;
+    let lastTap = { time: 0, x: 0, y: 0 };
+    let keyboardOpen = false;
+
+    function setStatus(text, hide = false) {
+      statusEl.style.display = "block";
+      statusEl.textContent = text;
+
+      if (hide) {
+        clearTimeout(setStatus.timer);
+        setStatus.timer = setTimeout(() => {
+          statusEl.style.display = "none";
+        }, 1400);
+      }
+    }
+
+    function send(obj) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(obj));
+      }
+    }
+
+    function connect() {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${protocol}//${location.host}/cdp-renderer`);
+
+      ws.onopen = () => setStatus("Connected to CDP renderer.", true);
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+
+        if (msg.type === "status") {
+          setStatus(msg.text, true);
+        }
+
+        if (msg.type === "error") {
+          setStatus(msg.error || "Renderer error.");
+        }
+
+        if (msg.type === "frame") {
+          drawFrame(msg.image, msg.metadata || {});
+        }
+      };
+
+      ws.onclose = () => {
+        setStatus("Disconnected. Reconnecting...");
+        setTimeout(connect, 1000);
+      };
+    }
+
+    function drawFrame(base64, meta) {
+      lastFrameMeta = {
+        deviceWidth: meta.deviceWidth || meta.viewportWidth || lastFrameMeta.deviceWidth || 1500,
+        deviceHeight: meta.deviceHeight || meta.viewportHeight || lastFrameMeta.deviceHeight || 950
+      };
+
+      const img = new Image();
+
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      };
+
+      img.src = `data:image/jpeg;base64,${base64}`;
+    }
+
+    function pointFromEvent(event) {
+      const rect = canvas.getBoundingClientRect();
+
+      const rx = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const ry = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+
+      return {
+        id: event.pointerId || 1,
+        x: Math.round(rx * (lastFrameMeta.deviceWidth || 1500)),
+        y: Math.round(ry * (lastFrameMeta.deviceHeight || 950))
+      };
+    }
+
+    function pointsArray() {
+      return Array.from(activePointers.values());
+    }
+
+    function averageClient(points) {
+      let x = 0;
+      let y = 0;
+
+      for (const p of points) {
+        x += p.clientX;
+        y += p.clientY;
+      }
+
+      return {
+        x: x / points.length,
+        y: y / points.length
+      };
+    }
+
+    function remoteFromClientPoint(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+
+      const rx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const ry = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+
+      return {
+        x: Math.round(rx * (lastFrameMeta.deviceWidth || 1500)),
+        y: Math.round(ry * (lastFrameMeta.deviceHeight || 950))
+      };
+    }
+
+    canvas.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+
+      const p = pointFromEvent(event);
+
+      activePointers.set(event.pointerId, {
+        ...p,
+        clientX: event.clientX,
+        clientY: event.clientY
+      });
+
+      if (activePointers.size >= 2) {
+        lastTwoFinger = averageClient(Array.from(activePointers.values()));
+        return;
+      }
+
+      if (mode === "mouse" || event.pointerType === "mouse") {
+        send({
+          type: "tap",
+          x: p.x,
+          y: p.y
+        });
+        return;
+      }
+
+      send({
+        type: "touchStart",
+        points: [p]
+      });
+    }, { passive: false });
+
+    canvas.addEventListener("pointermove", (event) => {
+      event.preventDefault();
+
+      if (!activePointers.has(event.pointerId)) return;
+
+      const p = pointFromEvent(event);
+
+      activePointers.set(event.pointerId, {
+        ...p,
+        clientX: event.clientX,
+        clientY: event.clientY
+      });
+
+      const all = Array.from(activePointers.values());
+
+      if (all.length >= 2) {
+        const now = averageClient(all);
+        const remote = remoteFromClientPoint(now.x, now.y);
+
+        if (lastTwoFinger) {
+          send({
+            type: "wheel",
+            x: remote.x,
+            y: remote.y,
+            deltaX: -(now.x - lastTwoFinger.x) * 2.8,
+            deltaY: -(now.y - lastTwoFinger.y) * 2.8
+          });
+        }
+
+        lastTwoFinger = now;
+        return;
+      }
+
+      if (mode === "touch" && event.pointerType !== "mouse") {
+        send({
+          type: "touchMove",
+          points: [p]
+        });
+      } else {
+        send({
+          type: "mouseMove",
+          x: p.x,
+          y: p.y
+        });
+      }
+    }, { passive: false });
+
+    canvas.addEventListener("pointerup", (event) => {
+      event.preventDefault();
+
+      const p = pointFromEvent(event);
+      activePointers.delete(event.pointerId);
+
+      if (activePointers.size === 0) {
+        lastTwoFinger = null;
+      }
+
+      const now = performance.now();
+      const dx = Math.abs(p.x - lastTap.x);
+      const dy = Math.abs(p.y - lastTap.y);
+      const wasTap = now - lastTap.time < 450 && dx < 18 && dy < 18;
+
+      lastTap = { time: now, x: p.x, y: p.y };
+
+      if (mode === "touch" && event.pointerType !== "mouse") {
+        send({ type: "touchEnd" });
+
+        if (!wasTap) {
+          send({
+            type: "tap",
+            x: p.x,
+            y: p.y
+          });
+        }
+      }
+    }, { passive: false });
+
+    canvas.addEventListener("pointercancel", (event) => {
+      event.preventDefault();
+      activePointers.clear();
+      lastTwoFinger = null;
+      send({ type: "touchEnd" });
+    }, { passive: false });
+
+    canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+
+      const p = remoteFromClientPoint(event.clientX, event.clientY);
+
+      send({
+        type: "wheel",
+        x: p.x,
+        y: p.y,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY
+      });
+    }, { passive: false });
+
+    function showKeyboard() {
+      keyboardOpen = !keyboardOpen;
+      keyboardBox.classList.toggle("visible", keyboardOpen);
+
+      if (keyboardOpen) {
+        keyboardBox.value = "";
+        keyboardBox.focus();
+        setStatus("Keyboard open. Text is inserted into the focused Chromium field.", true);
+      } else {
+        keyboardBox.blur();
+      }
+    }
+
+    keyboardBox.addEventListener("input", (event) => {
+      const value = keyboardBox.value;
+
+      if (event.inputType === "deleteContentBackward") {
+        send({ type: "key", key: "Backspace" });
+        keyboardBox.value = "";
+        return;
+      }
+
+      if (!value) return;
+
+      const normalized = value.replace(/\n/g, "");
+      if (normalized) {
+        send({
+          type: "insertText",
+          text: normalized
+        });
+      }
+
+      keyboardBox.value = "";
+    });
+
+    keyboardBox.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        send({ type: "key", key: "Enter" });
+        keyboardBox.value = "";
+      }
+
+      if (event.key === "Backspace") {
+        event.preventDefault();
+        send({ type: "key", key: "Backspace" });
+        keyboardBox.value = "";
+      }
+
+      if (event.key === "Tab") {
+        event.preventDefault();
+        send({ type: "key", key: "Tab" });
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        send({ type: "key", key: "Escape" });
+      }
+    });
+
+    document.getElementById("keyboardBtn").onclick = showKeyboard;
+
+    document.getElementById("backspaceBtn").onclick = () => {
+      send({ type: "key", key: "Backspace" });
+    };
+
+    document.getElementById("enterBtn").onclick = () => {
+      send({ type: "key", key: "Enter" });
+    };
+
+    document.getElementById("reloadBtn").onclick = () => {
+      send({ type: "reload" });
+    };
+
+    touchBtn.onclick = () => {
+      mode = "touch";
+      touchBtn.classList.add("active");
+      mouseBtn.classList.remove("active");
+      setStatus("Touch mode active.", true);
+    };
+
+    mouseBtn.onclick = () => {
+      mode = "mouse";
+      mouseBtn.classList.add("active");
+      touchBtn.classList.remove("active");
+      setStatus("Mouse mode active.", true);
+    };
+
+    document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
+    document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
+    document.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false });
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    connect();
+  </script>
+</body>
+</html>
+EOF
+
+cat > public/real-home.html <<'EOF'
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>CDP Browser Home</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070913;
+      --panel: rgba(18, 23, 38, 0.76);
+      --border: rgba(255, 255, 255, 0.14);
+      --text: #f7f8ff;
+      --muted: #a2abc7;
+      --accent: #7c5cff;
+      --accent2: #00d4ff;
+      --good: #4df2a5;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top left, rgba(124, 92, 255, 0.34), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(0, 212, 255, 0.2), transparent 34%),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(980px, calc(100vw - 48px));
+      padding: 42px;
+      border: 1px solid var(--border);
+      border-radius: 34px;
+      background: var(--panel);
+      box-shadow: 0 32px 120px rgba(0, 0, 0, 0.48);
+    }
+
+    .badge {
+      display: inline-flex;
+      padding: 9px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      max-width: 820px;
+      margin: 0;
+      font-size: clamp(44px, 7vw, 86px);
+      letter-spacing: -0.08em;
+      line-height: 0.92;
+      background: linear-gradient(135deg, white, #b4b9ff, var(--accent2));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    p {
+      max-width: 760px;
+      margin: 24px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.65;
+    }
+
+    .links {
+      margin-top: 30px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    a {
+      text-decoration: none;
+      color: white;
+      font-weight: 800;
+      padding: 13px 17px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .primary {
+      border: 0;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+    }
+
+    .note {
+      margin-top: 24px;
+      color: var(--good);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="badge">CDP touch + keyboard renderer</div>
+    <h1>Real Chromium, real touch events, real keyboard input.</h1>
+    <p>
+      Tap, drag, scroll, and type through the outer Codespaces UI.
+      The Chromium profile and cookies are temporary and deleted when the app restarts.
+    </p>
+
+    <div class="links">
+      <a class="primary" href="https://youtube.com">YouTube</a>
+      <a href="https://duckduckgo.com">DuckDuckGo</a>
+      <a href="https://github.com">GitHub</a>
+      <a href="https://developer.mozilla.org">MDN</a>
+    </div>
+
+    <div class="note">Tip: tap a text field first, then press Keyboard in the top-right.</div>
+  </main>
+</body>
+</html>
+EOF
+
+cat > .devcontainer/devcontainer.json <<'EOF'
+{
+  "name": "CDP Touch Browser",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "postCreateCommand": "npm install --no-package-lock",
+  "forwardPorts": [7860],
+  "portsAttributes": {
+    "7860": {
+      "label": "CDP Touch Browser",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "otherPortsAttributes": {
+    "onAutoForward": "silent"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.enablePersistentSessions": false,
+        "terminal.integrated.persistentSessionReviveProcess": "never"
+      }
+    }
+  }
+}
+EOF
+
+npm install --no-package-lock
+
+echo ""
+echo "Starting CDP touch browser..."
+echo "Open port 7860."
+echo ""
+
+PORT=7860 npm start
