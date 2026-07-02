@@ -1,5 +1,4 @@
 import express from "express";
-import * as cheerio from "cheerio";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -13,17 +12,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 7860);
-const CDP_PORT = 45992;
 const DISPLAY_NUM = ":99";
+const VNC_PORT = 45991;
+const CDP_PORT = 45992;
 
-const STREAM_MAX_WIDTH = 1280;
-const STREAM_MAX_HEIGHT = 760;
-const STREAM_JPEG_QUALITY = 48;
-const STREAM_EVERY_NTH_FRAME = 3;
-const STREAM_MIN_FRAME_INTERVAL_MS = 90;
-const CLIENT_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
-
-const GERMANY_BROWSER_LOCATION = {
+const GERMANY = {
   locale: "de-DE",
   acceptLanguage: "de-DE,de;q=0.9,en-US;q=0.6,en;q=0.5",
   timezone: "Europe/Berlin",
@@ -37,10 +30,7 @@ const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
 let tempRoot = null;
-let chromeStarted = false;
-let chromeProcess = null;
-let xvfbProcess = null;
-let fluxboxProcess = null;
+let children = [];
 
 app.disable("x-powered-by");
 app.set("etag", false);
@@ -60,60 +50,26 @@ app.use(express.static(path.join(__dirname, "public"), {
   setHeaders: (res) => res.setHeader("Cache-Control", "no-store")
 }));
 
-function cleanText(value = "") {
+app.use("/novnc", express.static("/usr/share/novnc", {
+  etag: false,
+  maxAge: 0
+}));
+
+function clean(value = "") {
   return String(value).replace(/\s+/g, " ").trim();
 }
 
 function normalizeUrl(raw) {
-  const value = cleanText(raw);
+  const value = clean(raw);
   if (!value) throw new Error("Empty URL.");
   if (value.startsWith("http://") || value.startsWith("https://")) return value;
   return `https://${value}`;
 }
 
-function isBlockedHost(hostname) {
-  const host = String(hostname || "").toLowerCase();
-  if (!host) return true;
-
-  if (
-    host === "localhost" ||
-    host === "0.0.0.0" ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
-    host.endsWith(".local")
-  ) return true;
-
-  const ipType = net.isIP(host);
-
-  if (ipType === 4) {
-    const parts = host.split(".").map(Number);
-    if (parts[0] === 10) return true;
-    if (parts[0] === 127) return true;
-    if (parts[0] === 169 && parts[1] === 254) return true;
-    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-    if (parts[0] === 192 && parts[1] === 168) return true;
-  }
-
-  return false;
-}
-
-function safePublicUrl(raw) {
-  const url = new URL(normalizeUrl(raw));
-
-  if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("Only http and https URLs are allowed.");
-  }
-
-  if (isBlockedHost(url.hostname)) {
-    throw new Error("Local/private network URLs are blocked.");
-  }
-
-  return url;
-}
-
 function commandExists(name) {
-  const paths = (process.env.PATH || "").split(":");
-  return paths.some((p) => fs.existsSync(path.join(p, name)));
+  return (process.env.PATH || "")
+    .split(":")
+    .some((p) => fs.existsSync(path.join(p, name)));
 }
 
 function findChromium() {
@@ -123,111 +79,24 @@ function findChromium() {
   return null;
 }
 
-function spawnQuiet(cmd, args, env = {}) {
-  return spawn(cmd, args, {
+function spawnChild(cmd, args, env = {}) {
+  const child = spawn(cmd, args, {
     stdio: "ignore",
     env: {
       ...process.env,
       ...env
     }
   });
+
+  children.push(child);
+  return child;
 }
 
-function startChrome() {
-  if (chromeStarted) return;
-  chromeStarted = true;
-
-  const chromeBin = findChromium();
-  if (!chromeBin) {
-    console.error("Chromium not found.");
-    return;
-  }
-
-  tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codespace-cdp-browser-"));
-
-  const profileDir = path.join(tempRoot, "profile");
-  const cacheDir = path.join(tempRoot, "cache");
-  const mediaCacheDir = path.join(tempRoot, "media-cache");
-  const homeDir = path.join(tempRoot, "home");
-  const runtimeDir = path.join(tempRoot, "runtime");
-
-  fs.mkdirSync(profileDir, { recursive: true });
-  fs.mkdirSync(cacheDir, { recursive: true });
-  fs.mkdirSync(mediaCacheDir, { recursive: true });
-  fs.mkdirSync(homeDir, { recursive: true });
-  fs.mkdirSync(runtimeDir, { recursive: true });
-  fs.chmodSync(runtimeDir, 0o700);
-
-  const env = {
-    DISPLAY: DISPLAY_NUM,
-    HOME: homeDir,
-    TZ: GERMANY_BROWSER_LOCATION.timezone,
-    LANG: "de_DE.UTF-8",
-    LANGUAGE: "de_DE:de",
-    XDG_CACHE_HOME: path.join(tempRoot, "xdg-cache"),
-    XDG_CONFIG_HOME: path.join(tempRoot, "xdg-config"),
-    XDG_RUNTIME_DIR: runtimeDir
-  };
-
-  xvfbProcess = spawnQuiet("Xvfb", [
-    DISPLAY_NUM,
-    "-screen",
-    "0",
-    "1500x950x24",
-    "-ac",
-    "+extension",
-    "RANDR"
-  ], env);
-
-  setTimeout(() => {
-    fluxboxProcess = spawnQuiet("fluxbox", [], env);
-  }, 500);
-
-  setTimeout(() => {
-    chromeProcess = spawnQuiet(chromeBin, [
-      `--user-data-dir=${profileDir}`,
-      `--disk-cache-dir=${cacheDir}`,
-      `--media-cache-dir=${mediaCacheDir}`,
-      `--remote-debugging-port=${CDP_PORT}`,
-      "--remote-debugging-address=127.0.0.1",
-      "--lang=de-DE",
-      `--accept-lang=${GERMANY_BROWSER_LOCATION.acceptLanguage}`,
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--disable-dev-shm-usage",
-      "--disable-renderer-backgrounding",
-      "--disable-background-timer-throttling",
-      "--disable-backgrounding-occluded-windows",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-sync",
-      "--disable-background-networking",
-      "--disable-component-update",
-      "--password-store=basic",
-      "--use-mock-keychain",
-      "--autoplay-policy=no-user-gesture-required",
-      "--touch-events=enabled",
-      "--enable-pinch",
-      "--overscroll-history-navigation=0",
-      "--force-dark-mode",
-      "--enable-features=WebUIDarkMode",
-      "--window-size=1500,950",
-      "--start-maximized",
-      "--no-sandbox",
-      `http://127.0.0.1:${PORT}/real-home.html`
-    ], env);
-  }, 1200);
-
-  console.log("Temporary Chromium profile/cookies:");
-  console.log(tempRoot);
-}
-
-async function waitForChrome(retries = 40) {
+async function waitForCdp(retries = 50) {
   for (let i = 0; i < retries; i++) {
     try {
-      const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`);
-      const targets = await response.json();
-
+      const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`);
+      const targets = await r.json();
       const page =
         targets.find((t) => t.type === "page" && t.webSocketDebuggerUrl) ||
         targets.find((t) => t.webSocketDebuggerUrl);
@@ -238,20 +107,20 @@ async function waitForChrome(retries = 40) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
-  throw new Error("Chromium CDP is not ready.");
+  throw new Error("Chromium is not ready yet.");
 }
 
-async function oneShotCdp(method, params = {}) {
-  const page = await waitForChrome();
+async function cdp(method, params = {}) {
+  const page = await waitForCdp();
 
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(page.webSocketDebuggerUrl);
-    const id = Math.floor(Math.random() * 1_000_000_000);
+    const id = Math.floor(Math.random() * 1000000000);
 
     const timer = setTimeout(() => {
       try { ws.close(); } catch {}
       reject(new Error("CDP timeout."));
-    }, 8000);
+    }, 10000);
 
     ws.on("open", () => {
       ws.send(JSON.stringify({ id, method, params }));
@@ -278,119 +147,221 @@ async function oneShotCdp(method, params = {}) {
   });
 }
 
-
-async function configureGermanyLocation(sendCommand = oneShotCdp) {
+async function configureGermanyAndTouch() {
   try {
-    await sendCommand("Emulation.setTimezoneOverride", {
-      timezoneId: GERMANY_BROWSER_LOCATION.timezone
-    });
-  } catch {}
-
-  try {
-    await sendCommand("Emulation.setLocaleOverride", {
-      locale: GERMANY_BROWSER_LOCATION.locale
-    });
-  } catch {}
-
-  try {
-    await sendCommand("Emulation.setGeolocationOverride", {
-      latitude: GERMANY_BROWSER_LOCATION.latitude,
-      longitude: GERMANY_BROWSER_LOCATION.longitude,
-      accuracy: GERMANY_BROWSER_LOCATION.accuracy
-    });
-  } catch {}
-
-  try {
-    await sendCommand("Browser.grantPermissions", {
-      permissions: ["geolocation"]
-    });
-  } catch {}
-}
-
-async function configureTouch() {
-  try {
-    await oneShotCdp("Emulation.setTouchEmulationEnabled", {
+    await cdp("Emulation.setTouchEmulationEnabled", {
       enabled: true,
       maxTouchPoints: 5
     });
   } catch {}
 
-  await configureGermanyLocation(oneShotCdp);
+  try {
+    await cdp("Emulation.setTimezoneOverride", {
+      timezoneId: GERMANY.timezone
+    });
+  } catch {}
+
+  try {
+    await cdp("Emulation.setLocaleOverride", {
+      locale: GERMANY.locale
+    });
+  } catch {}
+
+  try {
+    await cdp("Emulation.setGeolocationOverride", {
+      latitude: GERMANY.latitude,
+      longitude: GERMANY.longitude,
+      accuracy: GERMANY.accuracy
+    });
+  } catch {}
+
+  try {
+    await cdp("Browser.grantPermissions", {
+      permissions: ["geolocation"]
+    });
+  } catch {}
 }
 
-function createCdpRenderer(client) {
-  let chrome = null;
-  let nextId = 1;
-  let lastFrameSentAt = 0;
-  let rendererPaused = false;
-  let droppedFrames = 0;
-  const pending = new Map();
+function startBrowser() {
+  const chromeBin = findChromium();
+  if (!chromeBin) {
+    console.error("Chromium not found.");
+    process.exit(1);
+  }
 
-  const sendClient = (obj) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(obj));
+  tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codespace-real-novnc-"));
+
+  const profileDir = path.join(tempRoot, "profile");
+  const cacheDir = path.join(tempRoot, "cache");
+  const mediaCacheDir = path.join(tempRoot, "media-cache");
+  const homeDir = path.join(tempRoot, "home");
+  const runtimeDir = path.join(tempRoot, "runtime");
+
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.mkdirSync(mediaCacheDir, { recursive: true });
+  fs.mkdirSync(homeDir, { recursive: true });
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  fs.chmodSync(runtimeDir, 0o700);
+
+  const env = {
+    DISPLAY: DISPLAY_NUM,
+    HOME: homeDir,
+    TZ: GERMANY.timezone,
+    LANG: "de_DE.UTF-8",
+    LANGUAGE: "de_DE:de",
+    XDG_CACHE_HOME: path.join(tempRoot, "xdg-cache"),
+    XDG_CONFIG_HOME: path.join(tempRoot, "xdg-config"),
+    XDG_RUNTIME_DIR: runtimeDir
+  };
+
+  spawnChild("Xvfb", [
+    DISPLAY_NUM,
+    "-screen",
+    "0",
+    "1500x950x24",
+    "-ac",
+    "+extension",
+    "RANDR"
+  ], env);
+
+  setTimeout(() => {
+    spawnChild("fluxbox", [], env);
+  }, 500);
+
+  setTimeout(() => {
+    spawnChild("x11vnc", [
+      "-display",
+      DISPLAY_NUM,
+      "-localhost",
+      "-forever",
+      "-shared",
+      "-nopw",
+      "-rfbport",
+      String(VNC_PORT),
+      "-quiet"
+    ], env);
+  }, 1000);
+
+  setTimeout(() => {
+    spawnChild(chromeBin, [
+      `--user-data-dir=${profileDir}`,
+      `--disk-cache-dir=${cacheDir}`,
+      `--media-cache-dir=${mediaCacheDir}`,
+      `--remote-debugging-port=${CDP_PORT}`,
+      "--remote-debugging-address=127.0.0.1",
+      "--lang=de-DE",
+      `--accept-lang=${GERMANY.acceptLanguage}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-sync",
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-dev-shm-usage",
+      "--password-store=basic",
+      "--use-mock-keychain",
+      "--autoplay-policy=no-user-gesture-required",
+      "--touch-events=enabled",
+      "--enable-pinch",
+      "--overscroll-history-navigation=0",
+      "--force-dark-mode",
+      "--enable-features=WebUIDarkMode",
+      "--window-size=1500,950",
+      "--start-maximized",
+      "--no-sandbox",
+      `http://127.0.0.1:${PORT}/real-home.html`
+    ], env);
+  }, 1500);
+
+  setTimeout(() => {
+    configureGermanyAndTouch().catch(() => {});
+  }, 3500);
+
+  console.log("Temporary Chromium profile/cookies:");
+  console.log(tempRoot);
+  console.log("Deleted when app stops/restarts.");
+}
+
+server.on("upgrade", (req, socket, head) => {
+  if (!req.url.startsWith("/websockify")) {
+    socket.destroy();
+    return;
+  }
+
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    const vnc = net.createConnection(VNC_PORT, "127.0.0.1");
+
+    ws.on("message", (data) => {
+      if (!vnc.destroyed) vnc.write(data);
+    });
+
+    vnc.on("data", (data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+
+    const closeBoth = () => {
+      try { ws.close(); } catch {}
+      try { vnc.destroy(); } catch {}
+    };
+
+    ws.on("close", closeBoth);
+    ws.on("error", closeBoth);
+    vnc.on("close", closeBoth);
+    vnc.on("error", closeBoth);
+  });
+});
+
+app.post("/api/navigate", async (req, res) => {
+  try {
+    let value = clean(req.body?.url || "");
+
+    if (!value) throw new Error("Empty URL.");
+
+    if (!(value.startsWith("http://") || value.startsWith("https://"))) {
+      if (value.includes(".") && !value.includes(" ")) {
+        value = `https://${value}`;
+      } else {
+        value = `https://duckduckgo.com/?kl=de-de&kad=de_DE&q=${encodeURIComponent(value)}`;
+      }
     }
-  };
 
-  const sendChrome = (method, params = {}) => {
-    if (!chrome || chrome.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Chrome WebSocket not open."));
+    await configureGermanyAndTouch();
+    await cdp("Page.navigate", { url: value });
 
-    const id = nextId++;
-    chrome.send(JSON.stringify({ id, method, params }));
+    res.json({ ok: true, url: value });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || String(error) });
+  }
+});
 
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
+app.post("/api/text", async (req, res) => {
+  try {
+    const text = String(req.body?.text || "");
+    if (text) await cdp("Input.insertText", { text });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || String(error) });
+  }
+});
 
-      setTimeout(() => {
-        if (pending.has(id)) {
-          pending.delete(id);
-          reject(new Error(`CDP command timed out: ${method}`));
-        }
-      }, 20000);
-    });
-  };
+app.post("/api/key", async (req, res) => {
+  try {
+    const key = String(req.body?.key || "");
+    const keyMap = {
+      Enter: 13,
+      Backspace: 8,
+      Tab: 9,
+      Escape: 27,
+      ArrowLeft: 37,
+      ArrowUp: 38,
+      ArrowRight: 39,
+      ArrowDown: 40,
+      Delete: 46
+    };
 
-  const sendInputTouch = async (kind, points = []) => {
-    await sendChrome("Input.dispatchTouchEvent", {
-      type: kind,
-      touchPoints: points.map((p) => ({
-        x: Math.round(p.x),
-        y: Math.round(p.y),
-        id: p.id || 1,
-        radiusX: 5,
-        radiusY: 5,
-        force: 1
-      }))
-    });
-  };
-
-  const sendMouse = async (type, x, y, extra = {}) => {
-    await sendChrome("Input.dispatchMouseEvent", {
-      type,
-      x: Math.round(x),
-      y: Math.round(y),
-      ...extra
-    });
-  };
-
-  const keyMap = {
-    Enter: 13,
-    Backspace: 8,
-    Tab: 9,
-    Escape: 27,
-    ArrowLeft: 37,
-    ArrowUp: 38,
-    ArrowRight: 39,
-    ArrowDown: 40,
-    Delete: 46,
-    Home: 36,
-    End: 35
-  };
-
-  const pressKey = async (key) => {
     const code = keyMap[key] || 0;
 
-    await sendChrome("Input.dispatchKeyEvent", {
+    await cdp("Input.dispatchKeyEvent", {
       type: "rawKeyDown",
       key,
       code: key,
@@ -398,443 +369,94 @@ function createCdpRenderer(client) {
       nativeVirtualKeyCode: code
     });
 
-    await sendChrome("Input.dispatchKeyEvent", {
+    await cdp("Input.dispatchKeyEvent", {
       type: "keyUp",
       key,
       code: key,
       windowsVirtualKeyCode: code,
       nativeVirtualKeyCode: code
     });
-  };
 
-  waitForChrome().then((page) => {
-    chrome = new WebSocket(page.webSocketDebuggerUrl);
-
-    chrome.on("open", async () => {
-      sendClient({ type: "status", text: "Connected to Chromium CDP renderer." });
-
-      await sendChrome("Page.enable");
-      await sendChrome("Runtime.enable");
-      await sendChrome("Emulation.setTouchEmulationEnabled", {
-        enabled: true,
-        maxTouchPoints: 5
-      });
-
-      // GERMANY_LOCATION_RENDERER_PATCH
-      await configureGermanyLocation(sendChrome);
-
-      try {
-        await sendChrome("Page.stopScreencast");
-      } catch {}
-
-      await sendChrome("Page.startScreencast", {
-        format: "jpeg",
-        quality: STREAM_JPEG_QUALITY,
-        maxWidth: STREAM_MAX_WIDTH,
-        maxHeight: STREAM_MAX_HEIGHT,
-        everyNthFrame: STREAM_EVERY_NTH_FRAME
-      });
-
-      sendClient({ type: "ready" });
-    });
-
-    chrome.on("message", async (data) => {
-      let msg;
-
-      try {
-        msg = JSON.parse(String(data));
-      } catch {
-        return;
-      }
-
-      if (msg.id && pending.has(msg.id)) {
-        const item = pending.get(msg.id);
-        pending.delete(msg.id);
-
-        if (msg.error) item.reject(new Error(msg.error.message || "CDP error."));
-        else item.resolve(msg.result || {});
-      }
-
-      if (msg.method === "Page.screencastFrame") {
-        const { data: imageData, metadata, sessionId } = msg.params;
-
-        const now = Date.now();
-        const clientTooFull = client.bufferedAmount > CLIENT_MAX_BUFFERED_BYTES;
-        const tooSoon = now - lastFrameSentAt < STREAM_MIN_FRAME_INTERVAL_MS;
-
-        if (!rendererPaused && !clientTooFull && !tooSoon && client.readyState === WebSocket.OPEN) {
-          lastFrameSentAt = now;
-
-          sendClient({
-            type: "frame",
-            image: imageData,
-            metadata,
-            droppedFrames
-          });
-
-          droppedFrames = 0;
-        } else {
-          droppedFrames++;
-        }
-
-        try {
-          chrome.send(JSON.stringify({
-            id: nextId++,
-            method: "Page.screencastFrameAck",
-            params: { sessionId }
-          }));
-        } catch {}
-      }
-    });
-
-    chrome.on("close", () => {
-      sendClient({ type: "status", text: "Chromium connection closed." });
-    });
-
-    chrome.on("error", (error) => {
-      sendClient({ type: "error", error: error.message || String(error) });
-    });
-  }).catch((error) => {
-    sendClient({ type: "error", error: error.message || String(error) });
-  });
-
-  client.on("message", async (data) => {
-    try {
-      const msg = JSON.parse(String(data));
-
-      if (msg.type === "pauseRenderer") {
-        rendererPaused = true;
-        return;
-      }
-
-      if (msg.type === "resumeRenderer") {
-        rendererPaused = false;
-        return;
-      }
-
-      if (msg.type === "navigate") {
-        const url = safePublicUrl(msg.url);
-        await sendChrome("Page.navigate", { url: url.href });
-        return;
-      }
-
-      if (msg.type === "reload") {
-        await sendChrome("Page.reload", { ignoreCache: true });
-        return;
-      }
-
-      if (msg.type === "back") {
-        await sendChrome("Runtime.evaluate", { expression: "history.back()" });
-        return;
-      }
-
-      if (msg.type === "forward") {
-        await sendChrome("Runtime.evaluate", { expression: "history.forward()" });
-        return;
-      }
-
-      if (msg.type === "touchStart") {
-        await sendInputTouch("touchStart", msg.points || []);
-        return;
-      }
-
-      if (msg.type === "touchMove") {
-        await sendInputTouch("touchMove", msg.points || []);
-        return;
-      }
-
-      if (msg.type === "touchEnd") {
-        await sendInputTouch("touchEnd", []);
-        return;
-      }
-
-      if (msg.type === "tap") {
-        const x = Number(msg.x || 0);
-        const y = Number(msg.y || 0);
-
-        await sendInputTouch("touchStart", [{ x, y, id: 1 }]);
-        await sendInputTouch("touchEnd", []);
-        await sendMouse("mousePressed", x, y, { button: "left", buttons: 1, clickCount: 1 });
-        await sendMouse("mouseReleased", x, y, { button: "left", buttons: 0, clickCount: 1 });
-        return;
-      }
-
-      if (msg.type === "wheel") {
-        await sendMouse("mouseWheel", Number(msg.x || 0), Number(msg.y || 0), {
-          deltaX: Number(msg.deltaX || 0),
-          deltaY: Number(msg.deltaY || 0),
-          button: "none",
-          buttons: 0
-        });
-        return;
-      }
-
-      if (msg.type === "mouseMove") {
-        await sendMouse("mouseMoved", Number(msg.x || 0), Number(msg.y || 0), {
-          button: "none",
-          buttons: 0
-        });
-        return;
-      }
-
-      
-      if (msg.type === "youtubeAction") {
-        const ytAction = String(msg.action || "");
-        const ytSeconds = Number(msg.seconds || 0);
-
-        const expr =
-          "(() => {" +
-          "  const action = " + JSON.stringify(ytAction) + ";" +
-          "  const seconds = " + JSON.stringify(Number.isFinite(ytSeconds) ? ytSeconds : 0) + ";" +
-          "  const host = String(location.hostname || '').toLowerCase();" +
-          "  const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be' || host.endsWith('.youtu.be');" +
-          "  const video = document.querySelector('video');" +
-          "  if (!isYouTube || !video) return { ok: false, reason: 'Not on YouTube video page.' };" +
-          "  if (action === 'seek') {" +
-          "    const duration = Number.isFinite(video.duration) ? video.duration : 999999;" +
-          "    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + seconds));" +
-          "    return { ok: true, action, seconds, currentTime: video.currentTime };" +
-          "  }" +
-          "  if (action === 'togglePlay') {" +
-          "    if (video.paused) { video.play(); return { ok: true, action, playing: true }; }" +
-          "    video.pause(); return { ok: true, action, playing: false };" +
-          "  }" +
-          "  if (action === 'speedStart') {" +
-          "    if (!window.__codespaceOldPlaybackRate) window.__codespaceOldPlaybackRate = video.playbackRate || 1;" +
-          "    video.playbackRate = 2;" +
-          "    return { ok: true, action, playbackRate: video.playbackRate };" +
-          "  }" +
-          "  if (action === 'speedEnd') {" +
-          "    video.playbackRate = window.__codespaceOldPlaybackRate || 1;" +
-          "    window.__codespaceOldPlaybackRate = null;" +
-          "    return { ok: true, action, playbackRate: video.playbackRate };" +
-          "  }" +
-          "  if (action === 'mute') {" +
-          "    video.muted = !video.muted;" +
-          "    return { ok: true, action, muted: video.muted };" +
-          "  }" +
-          "  return { ok: false, reason: 'Unknown YouTube action.' };" +
-          "})()";
-
-        const result = await sendChrome("Runtime.evaluate", {
-          expression: expr,
-          returnByValue: true,
-          awaitPromise: true
-        });
-
-        const value = result?.result?.value || {};
-        sendClient({
-          type: "youtubeActionResult",
-          action: ytAction,
-          ...value
-        });
-
-        return;
-      }
-
-      if (msg.type === "insertText") {
-        await sendChrome("Input.insertText", { text: String(msg.text || "") });
-        return;
-      }
-
-      if (msg.type === "key") {
-        await pressKey(String(msg.key || ""));
-        return;
-      }
-    } catch (error) {
-      sendClient({ type: "error", error: error.message || String(error) });
-    }
-  });
-
-  client.on("close", () => {
-    try {
-      chrome?.close();
-    } catch {}
-  });
-}
-
-server.on("upgrade", (req, socket, head) => {
-  if (!req.url.startsWith("/cdp-renderer")) {
-    socket.destroy();
-    return;
-  }
-
-  wss.handleUpgrade(req, socket, head, (client) => {
-    createCdpRenderer(client);
-  });
-});
-
-function unwrapDuckDuckGoUrl(href) {
-  try {
-    if (!href) return "";
-    let urlText = href;
-    if (urlText.startsWith("//")) urlText = `https:${urlText}`;
-    if (urlText.startsWith("/")) urlText = `https://duckduckgo.com${urlText}`;
-
-    const url = new URL(urlText);
-    const uddg = url.searchParams.get("uddg");
-    if (uddg) return decodeURIComponent(uddg);
-    return url.href;
-  } catch {
-    return href || "";
-  }
-}
-
-async function fetchText(url, options = {}) {
-  const response = await fetch(url, {
-    redirect: "follow",
-    headers: {
-      "User-Agent": "Mozilla/5.0 CodespaceBrowser/4.0 Chrome/124 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
-      "Accept-Language": GERMANY_BROWSER_LOCATION.acceptLanguage,
-      ...options.headers
-    },
-    signal: AbortSignal.timeout(options.timeoutMs || 15000)
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const text = await response.text();
-
-  return {
-    ok: response.ok,
-    status: response.status,
-    statusText: response.statusText,
-    contentType,
-    text,
-    finalUrl: response.url
-  };
-}
-
-app.post("/api/real/navigate", async (req, res) => {
-  try {
-    const url = safePublicUrl(req.body?.url || "");
-    await configureTouch();
-    await oneShotCdp("Page.navigate", { url: url.href });
-    res.json({ ok: true, url: url.href });
+    res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || String(error) });
   }
 });
 
-app.get("/api/germany-location-test", async (req, res) => {
+app.post("/api/youtube", async (req, res) => {
   try {
-    await configureGermanyLocation(oneShotCdp);
+    const action = String(req.body?.action || "");
+    const seconds = Number(req.body?.seconds || 0);
 
-    const result = await oneShotCdp("Runtime.evaluate", {
+    const expression = `
+(() => {
+  const action = ${JSON.stringify(action)};
+  const seconds = ${JSON.stringify(Number.isFinite(seconds) ? seconds : 0)};
+  const video = document.querySelector("video");
+  if (!video) return { ok: false, reason: "No video found" };
+
+  if (action === "seek") {
+    const duration = Number.isFinite(video.duration) ? video.duration : 999999;
+    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + seconds));
+    return { ok: true };
+  }
+
+  if (action === "togglePlay") {
+    if (video.paused) video.play();
+    else video.pause();
+    return { ok: true };
+  }
+
+  if (action === "speedStart") {
+    if (!window.__oldRate) window.__oldRate = video.playbackRate || 1;
+    video.playbackRate = 2;
+    return { ok: true };
+  }
+
+  if (action === "speedEnd") {
+    video.playbackRate = window.__oldRate || 1;
+    window.__oldRate = null;
+    return { ok: true };
+  }
+
+  return { ok: false };
+})()
+`;
+
+    const result = await cdp("Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+      awaitPromise: true
+    });
+
+    res.json({ ok: true, result });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || String(error) });
+  }
+});
+
+app.get("/api/germany-test", async (req, res) => {
+  try {
+    await configureGermanyAndTouch();
+
+    const result = await cdp("Runtime.evaluate", {
       expression: "({ language: navigator.language, languages: navigator.languages, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, href: location.href })",
       returnByValue: true
     });
 
     res.json({
       ok: true,
-      intended_location: "Germany / Berlin",
-      note: "This changes browser locale/timezone/geolocation signals, not GitHub Codespaces' real IP.",
-      chromium_reported: result?.result?.value || null
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message || String(error)
-    });
-  }
-});
-
-app.get("/api/real/status", (req, res) => {
-  res.json({
-    ok: true,
-    chromeStarted,
-    temporaryProfile: Boolean(tempRoot)
-  });
-});
-
-app.post("/api/search", async (req, res) => {
-  try {
-    const q = cleanText(req.body?.q || "");
-    if (!q) return res.status(400).json({ ok: false, error: "Search is empty." });
-
-    const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
-    const page = await fetchText(searchUrl);
-
-    const $ = cheerio.load(page.text);
-    const results = [];
-    const seen = new Set();
-
-    $(".result").each((_, el) => {
-      const titleEl = $(el).find(".result__a").first();
-      const snippetEl = $(el).find(".result__snippet").first();
-      const urlEl = $(el).find(".result__url").first();
-
-      const title = cleanText(titleEl.text());
-      const href = unwrapDuckDuckGoUrl(titleEl.attr("href") || "");
-      const body = cleanText(snippetEl.text());
-      const displayUrl = cleanText(urlEl.text()) || href;
-
-      if (!title || !href || seen.has(href)) return;
-      seen.add(href);
-
-      results.push({ title, url: href, displayUrl, body });
-    });
-
-    res.json({ ok: true, q, results: results.slice(0, 18) });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message || String(error) });
-  }
-});
-
-app.post("/api/reader", async (req, res) => {
-  try {
-    const url = safePublicUrl(req.body?.url || "");
-    const page = await fetchText(url.href);
-
-    const $ = cheerio.load(page.text);
-    $("script, style, noscript, svg, canvas, iframe, form, nav, footer, aside").remove();
-
-    const title =
-      cleanText($("title").first().text()) ||
-      cleanText($("h1").first().text()) ||
-      url.hostname;
-
-    const parts = [];
-
-    $("main article h1, main article h2, main article h3, main article p, main article li, article h1, article h2, article h3, article p, article li, h1, h2, h3, p, li").each((_, el) => {
-      const text = cleanText($(el).text());
-      if (text.length < 35) return;
-      if (parts.includes(text)) return;
-      parts.push(text);
-    });
-
-    res.json({
-      ok: true,
-      url: page.finalUrl || url.href,
-      title,
-      parts: parts.slice(0, 120)
+      note: "Browser reports German language/timezone/geolocation. Real IP is still GitHub Codespaces.",
+      result
     });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || String(error) });
-  }
-});
-
-app.get("/api/proxy", async (req, res) => {
-  try {
-    const url = safePublicUrl(req.query.url || "");
-    const page = await fetchText(url.href);
-
-    const $ = cheerio.load(page.text);
-    $("meta[http-equiv='Content-Security-Policy']").remove();
-
-    if ($("head").length === 0) $("html").prepend("<head></head>");
-    $("head").prepend(`<base href="${page.finalUrl || url.href}">`);
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send($.html());
-  } catch (error) {
-    res.status(500).send(error.message || String(error));
   }
 });
 
 function cleanup() {
-  for (const p of [chromeProcess, fluxboxProcess, xvfbProcess]) {
-    try { p?.kill("SIGTERM"); } catch {}
+  for (const child of children) {
+    try { child.kill("SIGTERM"); } catch {}
   }
 
   if (tempRoot) {
@@ -853,14 +475,15 @@ process.on("SIGTERM", () => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  startChrome();
+  startBrowser();
 
   console.log("");
   console.log("====================================================");
-  console.log(" CDP Touch Browser running");
-  console.log(` Open Codespaces forwarded port: ${PORT}`);
-  console.log(" Touch + keyboard are now CDP-based, not noVNC.");
+  console.log(" Real noVNC Chromium Browser running");
+  console.log(` Open Codespaces port: ${PORT}`);
+  console.log(" Bad CDP canvas renderer removed.");
   console.log(" Cookies/profile are temporary and deleted on restart.");
+  console.log(" Germany browser signals enabled.");
   console.log("====================================================");
   console.log("");
 });

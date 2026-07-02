@@ -2,18 +2,16 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>CDP Browser Home</title>
+  <title>Real Browser Home</title>
   <style>
     :root {
       color-scheme: dark;
       --bg: #070913;
-      --panel: rgba(18, 23, 38, 0.76);
-      --border: rgba(255, 255, 255, 0.14);
-      --text: #f7f8ff;
+      --panel: rgba(18,23,38,.82);
+      --border: rgba(255,255,255,.14);
       --muted: #a2abc7;
       --accent: #7c5cff;
       --accent2: #00d4ff;
-      --good: #4df2a5;
     }
 
     * { box-sizing: border-box; }
@@ -24,11 +22,11 @@
       display: grid;
       place-items: center;
       background:
-        radial-gradient(circle at top left, rgba(124, 92, 255, 0.34), transparent 34%),
-        radial-gradient(circle at bottom right, rgba(0, 212, 255, 0.2), transparent 34%),
+        radial-gradient(circle at top left, rgba(124,92,255,.34), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(0,212,255,.22), transparent 34%),
         var(--bg);
-      color: var(--text);
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: white;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     main {
@@ -37,7 +35,7 @@
       border: 1px solid var(--border);
       border-radius: 34px;
       background: var(--panel);
-      box-shadow: 0 32px 120px rgba(0, 0, 0, 0.48);
+      box-shadow: 0 32px 120px rgba(0,0,0,.48);
     }
 
     .badge {
@@ -53,11 +51,10 @@
       max-width: 820px;
       margin: 0;
       font-size: clamp(44px, 7vw, 86px);
-      letter-spacing: -0.08em;
-      line-height: 0.92;
+      letter-spacing: -.08em;
+      line-height: .92;
       background: linear-gradient(135deg, white, #b4b9ff, var(--accent2));
       -webkit-background-clip: text;
-      background-clip: text;
       color: transparent;
     }
 
@@ -83,38 +80,30 @@
       padding: 13px 17px;
       border-radius: 16px;
       border: 1px solid var(--border);
-      background: rgba(255, 255, 255, 0.08);
+      background: rgba(255,255,255,.08);
     }
 
     .primary {
       border: 0;
       background: linear-gradient(135deg, var(--accent), var(--accent2));
     }
-
-    .note {
-      margin-top: 24px;
-      color: var(--good);
-      font-size: 14px;
-    }
   </style>
 </head>
 <body>
   <main>
-    <div class="badge">CDP touch + keyboard renderer</div>
-    <h1>Real Chromium, real touch events, real keyboard input.</h1>
+    <div class="badge">Official noVNC + real Chromium</div>
+    <h1>No more bad screenshot canvas.</h1>
     <p>
-      Tap, drag, scroll, and type through the outer Codespaces UI.
-      The Chromium profile and cookies are temporary and deleted when the app restarts.
+      This is a real Chromium window rendered through noVNC. Cookies are temporary.
+      German language, timezone, and geolocation signals are enabled.
     </p>
 
     <div class="links">
       <a class="primary" href="https://youtube.com">YouTube</a>
-      <a href="https://duckduckgo.com">DuckDuckGo</a>
+      <a href="https://duckduckgo.com/?kl=de-de">DuckDuckGo Germany</a>
+      <a href="https://google.de">Google Germany</a>
       <a href="https://github.com">GitHub</a>
-      <a href="https://developer.mozilla.org">MDN</a>
     </div>
-
-    <div class="note">Tip: tap a text field first, then press Keyboard in the top-right.</div>
   </main>
 </body>
 </html>
