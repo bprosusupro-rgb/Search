@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Real noVNC Browser</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brandIcon">◈</div>
+        <div>
+          <div class="brandTitle">Real Browser</div>
+          <div class="brandSub">noVNC + Chromium, no bad screencast canvas</div>
+        </div>
+      </div>
+
+      <div class="address">
+        <input id="addressInput" autocomplete="off" spellcheck="false" placeholder="Search or enter URL..." />
+        <button id="goBtn">Go</button>
+      </div>
+
+      <button id="keyboardBtn">Keyboard</button>
+      <button id="ytBackBtn">−10</button>
+      <button id="ytPlayBtn">Play</button>
+      <button id="ytForwardBtn">+10</button>
+      <button id="reloadBtn">Reload</button>
+      <button id="focusBtn">⛶</button>
+    </header>
+
+    <main class="viewer">
+      <iframe id="realFrame" src="/real.html" allow="clipboard-read; clipboard-write; fullscreen; autoplay"></iframe>
+    </main>
+
+    <input id="keyboardBox" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type here → sends to focused Chromium field" />
+
+    <div id="toast"></div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

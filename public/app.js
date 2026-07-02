@@ -105,6 +105,22 @@ keyboardBox.addEventListener("keydown", async (event) => {
   }
 });
 
+
+const saveBtn = document.getElementById("saveBtn");
+
+if (saveBtn) {
+  saveBtn.onclick = async () => {
+    try {
+      toast("Saving browser state...");
+      const data = await postJson("/api/save-state", {});
+      toast("Saved state to .browser_state/");
+      console.log("Saved browser state:", data);
+    } catch (error) {
+      toast(error.message || "Save failed.");
+    }
+  };
+}
+
 document.getElementById("ytBackBtn").onclick = () => {
   postJson("/api/youtube", { action: "seek", seconds: -10 }).then(() => toast("-10 seconds")).catch(() => toast("No YouTube video found"));
 };

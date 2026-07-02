@@ -31,6 +31,31 @@ const wss = new WebSocketServer({ noServer: true });
 
 let tempRoot = null;
 let children = [];
+let currentProfileDir = null;
+
+const SAVED_STATE_DIR = path.join(__dirname, ".browser_state");
+const SAVED_PROFILE_DIR = path.join(SAVED_STATE_DIR, "profile");
+const SAVED_INFO_FILE = path.join(SAVED_STATE_DIR, "state.json");
+
+function cleanupProfileRuntimeFiles(profileDir) {
+  if (!profileDir || !fs.existsSync(profileDir)) return;
+
+  for (const name of [
+    "SingletonLock",
+    "SingletonCookie",
+    "SingletonSocket",
+    "BrowserMetrics",
+    "Crashpad",
+    "Default/LOCK",
+    "Default/SingletonLock",
+    "Default/SingletonCookie",
+    "Default/SingletonSocket"
+  ]) {
+    try {
+      fs.rmSync(path.join(profileDir, name), { recursive: true, force: true });
+    } catch {}
+  }
+}
 
 app.disable("x-powered-by");
 app.set("etag", false);
@@ -203,6 +228,18 @@ function startBrowser() {
   fs.mkdirSync(homeDir, { recursive: true });
   fs.mkdirSync(runtimeDir, { recursive: true });
   fs.chmodSync(runtimeDir, 0o700);
+
+  currentProfileDir = profileDir;
+
+  if (fs.existsSync(SAVED_PROFILE_DIR)) {
+    console.log("Restoring saved browser state from .browser_state/profile ...");
+    fs.cpSync(SAVED_PROFILE_DIR, profileDir, {
+      recursive: true,
+      force: true,
+      errorOnExist: false
+    });
+    cleanupProfileRuntimeFiles(profileDir);
+  }
 
   const env = {
     DISPLAY: DISPLAY_NUM,
@@ -432,6 +469,99 @@ app.post("/api/youtube", async (req, res) => {
     res.json({ ok: true, result });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || String(error) });
+  }
+});
+
+
+app.get("/api/save-state-info", (req, res) => {
+  let info = null;
+
+  try {
+    if (fs.existsSync(SAVED_INFO_FILE)) {
+      info = JSON.parse(fs.readFileSync(SAVED_INFO_FILE, "utf8"));
+    }
+  } catch {}
+
+  res.json({
+    ok: true,
+    hasSavedState: fs.existsSync(SAVED_PROFILE_DIR),
+    info
+  });
+});
+
+app.post("/api/save-state", async (req, res) => {
+  try {
+    if (!currentProfileDir || !fs.existsSync(currentProfileDir)) {
+      throw new Error("No running Chromium profile found.");
+    }
+
+    let currentUrl = "";
+
+    try {
+      const result = await cdp("Runtime.evaluate", {
+        expression: "location.href",
+        returnByValue: true
+      });
+
+      currentUrl = result?.result?.value || "";
+    } catch {}
+
+    fs.rmSync(SAVED_STATE_DIR, {
+      recursive: true,
+      force: true
+    });
+
+    fs.mkdirSync(SAVED_STATE_DIR, {
+      recursive: true
+    });
+
+    cleanupProfileRuntimeFiles(currentProfileDir);
+
+    fs.cpSync(currentProfileDir, SAVED_PROFILE_DIR, {
+      recursive: true,
+      force: true,
+      errorOnExist: false
+    });
+
+    cleanupProfileRuntimeFiles(SAVED_PROFILE_DIR);
+
+    const info = {
+      savedAt: new Date().toISOString(),
+      url: currentUrl,
+      note: "This saved browser profile can include cookies and login sessions. Do not commit it publicly."
+    };
+
+    fs.writeFileSync(SAVED_INFO_FILE, JSON.stringify(info, null, 2));
+
+    res.json({
+      ok: true,
+      savedAt: info.savedAt,
+      url: currentUrl,
+      path: ".browser_state/"
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message || String(error)
+    });
+  }
+});
+
+app.post("/api/delete-saved-state", (req, res) => {
+  try {
+    fs.rmSync(SAVED_STATE_DIR, {
+      recursive: true,
+      force: true
+    });
+
+    res.json({
+      ok: true
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message || String(error)
+    });
   }
 });
 
