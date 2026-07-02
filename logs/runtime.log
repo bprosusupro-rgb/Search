@@ -1,0 +1,19 @@
+
+> codespace-real-novnc-browser@5.0.0 start
+> node server.js
+
+ Watch-only port running on: 7861
+Restoring saved browser state from .browser_state/profile ...
+Temporary Chromium profile/cookies:
+/tmp/codespace-real-novnc-AyW3ws
+Deleted when app stops/restarts.
+
+====================================================
+ Real noVNC Chromium Browser running
+ Open Codespaces main port: 7860
+ Open Codespaces watch port: 7861
+ Bad CDP canvas renderer removed.
+ Cookies/profile are temporary and deleted on restart.
+ Germany browser signals enabled.
+====================================================
+

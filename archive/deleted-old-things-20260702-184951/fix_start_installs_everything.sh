@@ -1,6 +1,74 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo ""
+echo "===================================================="
+echo " Fix start.sh: install/check all browser dependencies"
+echo "===================================================="
+echo ""
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+ARCHIVE="archive/start-fix-$STAMP"
+mkdir -p "$ARCHIVE"
+
+[ -f start.sh ] && cp -a start.sh "$ARCHIVE/start.sh.backup"
+[ -f install_browser_deps.sh ] && cp -a install_browser_deps.sh "$ARCHIVE/install_browser_deps.sh.backup"
+
+cat > install_browser_deps.sh <<'INSTALL'
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+echo ""
+echo "===================================================="
+echo " Installing browser system dependencies"
+echo "===================================================="
+echo ""
+
+if ! command -v sudo >/dev/null 2>&1; then
+  echo "ERROR: sudo not found. This install script needs sudo in Codespaces/devcontainer."
+  exit 1
+fi
+
+sudo apt-get update
+
+sudo apt-get install -y --no-install-recommends \
+  chromium \
+  xvfb \
+  x11vnc \
+  fluxbox \
+  novnc \
+  websockify \
+  dbus-x11 \
+  ca-certificates \
+  fonts-liberation \
+  fonts-noto-color-emoji \
+  xdg-utils \
+  curl \
+  procps \
+  iproute2
+
+sudo apt-get clean
+sudo rm -rf /var/lib/apt/lists/*
+
+echo ""
+echo "Installed versions / paths:"
+echo "Chromium: $(command -v chromium || command -v chromium-browser || command -v google-chrome || true)"
+echo "Xvfb:     $(command -v Xvfb || true)"
+echo "x11vnc:   $(command -v x11vnc || true)"
+echo "fluxbox:  $(command -v fluxbox || true)"
+echo "noVNC:    $([ -d /usr/share/novnc ] && echo /usr/share/novnc || echo missing)"
+echo ""
+echo "Done."
+INSTALL
+
+chmod +x install_browser_deps.sh
+
+cat > start.sh <<'START'
+#!/usr/bin/env bash
+set -euo pipefail
+
 PORT="${PORT:-7860}"
 WATCH_PORT="${WATCH_PORT:-7861}"
 SCREEN_SIZE="${SCREEN_SIZE:-1280x720x24}"
@@ -161,3 +229,21 @@ NOVNC_COMPRESSION="$NOVNC_COMPRESSION" \
 VNC_WAIT_MS="$VNC_WAIT_MS" \
 VNC_DEFER_MS="$VNC_DEFER_MS" \
 npm start 2>&1 | tee -a logs/runtime.log
+START
+
+chmod +x start.sh
+
+echo ""
+echo "Final check:"
+bash -n start.sh
+bash -n install_browser_deps.sh
+
+echo ""
+echo "===================================================="
+echo "Done."
+echo "Backup saved in: $ARCHIVE"
+echo "===================================================="
+echo ""
+echo "Now run:"
+echo "  ./start.sh"
+echo ""
