@@ -12,7 +12,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 7860);
-const WATCH_PORT = Number(process.env.WATCH_PORT || 7861);
 const DISPLAY_NUM = ":99";
 const VNC_PORT = 45991;
 const CDP_PORT = 45992;
@@ -29,10 +28,6 @@ const GERMANY = {
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
-
-const watchApp = express();
-const watchServer = createServer(watchApp);
-const watchWss = new WebSocketServer({ noServer: true });
 
 let tempRoot = null;
 let children = [];
@@ -81,32 +76,6 @@ app.use(express.static(path.join(__dirname, "public"), {
 }));
 
 app.use("/novnc", express.static("/usr/share/novnc", {
-  etag: false,
-  maxAge: 0
-}));
-
-watchApp.disable("x-powered-by");
-watchApp.set("etag", false);
-
-watchApp.use((req, res, next) => {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  next();
-});
-
-watchApp.get("/", (req, res) => {
-  res.redirect("/watch.html");
-});
-
-watchApp.use(express.static(path.join(__dirname, "public"), {
-  etag: false,
-  maxAge: 0,
-  setHeaders: (res) => res.setHeader("Cache-Control", "no-store")
-}));
-
-watchApp.use("/novnc", express.static("/usr/share/novnc", {
   etag: false,
   maxAge: 0
 }));
@@ -350,29 +319,6 @@ function startBrowser() {
   console.log("Deleted when app stops/restarts.");
 }
 
-
-function bridgeVncWebsocket(ws) {
-  const vnc = net.createConnection(VNC_PORT, "127.0.0.1");
-
-  ws.on("message", (data) => {
-    if (!vnc.destroyed) vnc.write(data);
-  });
-
-  vnc.on("data", (data) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(data);
-  });
-
-  const closeBoth = () => {
-    try { ws.close(); } catch {}
-    try { vnc.destroy(); } catch {}
-  };
-
-  ws.on("close", closeBoth);
-  ws.on("error", closeBoth);
-  vnc.on("close", closeBoth);
-  vnc.on("error", closeBoth);
-}
-
 server.on("upgrade", (req, socket, head) => {
   if (!req.url.startsWith("/websockify")) {
     socket.destroy();
@@ -380,18 +326,25 @@ server.on("upgrade", (req, socket, head) => {
   }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
-    bridgeVncWebsocket(ws);
-  });
-});
+    const vnc = net.createConnection(VNC_PORT, "127.0.0.1");
 
-watchServer.on("upgrade", (req, socket, head) => {
-  if (!req.url.startsWith("/websockify")) {
-    socket.destroy();
-    return;
-  }
+    ws.on("message", (data) => {
+      if (!vnc.destroyed) vnc.write(data);
+    });
 
-  watchWss.handleUpgrade(req, socket, head, (ws) => {
-    bridgeVncWebsocket(ws);
+    vnc.on("data", (data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+
+    const closeBoth = () => {
+      try { ws.close(); } catch {}
+      try { vnc.destroy(); } catch {}
+    };
+
+    ws.on("close", closeBoth);
+    ws.on("error", closeBoth);
+    vnc.on("close", closeBoth);
+    vnc.on("error", closeBoth);
   });
 });
 
@@ -415,70 +368,6 @@ app.post("/api/navigate", async (req, res) => {
     res.json({ ok: true, url: value });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || String(error) });
-  }
-});
-
-
-app.post("/api/watch-mode", async (req, res) => {
-  try {
-    await configureGermanyAndTouch();
-
-    let info = {};
-
-    try {
-      const result = await cdp("Runtime.evaluate", {
-        expression: `
-(() => {
-  const video = document.querySelector("video");
-
-  if (video) {
-    try { video.play(); } catch {}
-  }
-
-  const host = String(location.hostname || "").toLowerCase();
-  const isYouTube =
-    host === "youtube.com" ||
-    host.endsWith(".youtube.com") ||
-    host === "youtu.be" ||
-    host.endsWith(".youtu.be");
-
-  if (isYouTube) {
-    try {
-      const player = document.querySelector("#movie_player");
-      if (player?.setPlaybackQualityRange) player.setPlaybackQualityRange("small", "medium");
-      if (player?.setPlaybackQuality) player.setPlaybackQuality("small");
-    } catch {}
-
-    try {
-      document.body.style.cursor = "none";
-    } catch {}
-  }
-
-  return {
-    href: location.href,
-    title: document.title,
-    isYouTube,
-    hasVideo: Boolean(video)
-  };
-})()
-`,
-        returnByValue: true,
-        awaitPromise: true
-      });
-
-      info = result?.result?.value || {};
-    } catch {}
-
-    res.json({
-      ok: true,
-      watchPort: WATCH_PORT,
-      info
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: error.message || String(error)
-    });
   }
 });
 
@@ -715,18 +604,13 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-watchServer.listen(WATCH_PORT, "0.0.0.0", () => {
-  console.log(` Watch-only port running on: ${WATCH_PORT}`);
-});
-
 server.listen(PORT, "0.0.0.0", () => {
   startBrowser();
 
   console.log("");
   console.log("====================================================");
   console.log(" Real noVNC Chromium Browser running");
-  console.log(` Open Codespaces main port: ${PORT}`);
-  console.log(` Open Codespaces watch port: ${WATCH_PORT}`);
+  console.log(` Open Codespaces port: ${PORT}`);
   console.log(" Bad CDP canvas renderer removed.");
   console.log(" Cookies/profile are temporary and deleted on restart.");
   console.log(" Germany browser signals enabled.");

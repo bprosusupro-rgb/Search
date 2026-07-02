@@ -2,11 +2,18 @@
   "name": "Real noVNC Browser",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
   "postCreateCommand": "npm install --no-package-lock",
-  "forwardPorts": [7860],
+  "forwardPorts": [
+    7860,
+    7861
+  ],
   "portsAttributes": {
     "7860": {
       "label": "Real noVNC Browser",
       "onAutoForward": "openBrowser"
+    },
+    "7861": {
+      "label": "Watch-only Browser",
+      "onAutoForward": "silent"
     }
   },
   "otherPortsAttributes": {

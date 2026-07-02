@@ -2,13 +2,11 @@
 set -e
 
 PORT="${PORT:-7860}"
-WATCH_PORT="${WATCH_PORT:-7861}"
 
 echo ""
 echo "===================================================="
 echo " Starting Real noVNC Chromium Browser"
-echo " Main Port: $PORT"
-echo " Watch Port: $WATCH_PORT"
+echo " Port: $PORT"
 echo "===================================================="
 echo ""
 
@@ -44,10 +42,7 @@ echo "$PORT"
 if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
   echo ""
   echo "Correct link:"
-  echo "Main:"
   echo "https://${CODESPACE_NAME}-${PORT}.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}/"
-  echo "Watch-only:"
-  echo "https://${CODESPACE_NAME}-${WATCH_PORT}.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}/watch.html"
 fi
 
 echo ""
@@ -55,4 +50,4 @@ echo "Browser is starting..."
 echo "Press Ctrl+C here to stop it."
 echo ""
 
-PORT="$PORT" WATCH_PORT="$WATCH_PORT" npm start
+PORT="$PORT" npm start

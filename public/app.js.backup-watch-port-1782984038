@@ -106,40 +106,6 @@ keyboardBox.addEventListener("keydown", async (event) => {
 });
 
 
-
-function getWatchPortUrl() {
-  const host = location.host;
-
-  if (/-\d+\./.test(host)) {
-    return location.protocol + "//" + host.replace(/-\d+\./, "-7861.") + "/watch.html";
-  }
-
-  if (/:\d+$/.test(host)) {
-    return location.protocol + "//" + host.replace(/:\d+$/, ":7861") + "/watch.html";
-  }
-
-  return location.protocol + "//" + location.hostname + ":7861/watch.html";
-}
-
-const watchPortBtn = document.getElementById("watchPortBtn");
-
-if (watchPortBtn) {
-  watchPortBtn.onclick = async () => {
-    try {
-      toast("Preparing watch-only port...");
-      await postJson("/api/watch-mode", {});
-
-      const url = getWatchPortUrl();
-      window.open(url, "_blank", "noopener,noreferrer");
-
-      toast("Opened Watch Port 7861");
-      console.log("Watch Port URL:", url);
-    } catch (error) {
-      toast(error.message || "Watch Port failed.");
-    }
-  };
-}
-
 const saveBtn = document.getElementById("saveBtn");
 
 if (saveBtn) {

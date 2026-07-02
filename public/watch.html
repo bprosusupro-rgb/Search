@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Watch Port</title>
+  <style>
+    html,
+    body,
+    #screen {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      touch-action: none;
+      overscroll-behavior: none;
+    }
+
+    body {
+      position: fixed;
+      inset: 0;
+    }
+
+    #screen {
+      position: absolute;
+      inset: 0;
+    }
+
+    #status {
+      position: fixed;
+      left: 14px;
+      top: 14px;
+      z-index: 10;
+      padding: 9px 12px;
+      border-radius: 999px;
+      background: rgba(0,0,0,.58);
+      color: white;
+      font: 12px system-ui, sans-serif;
+      pointer-events: none;
+      opacity: 1;
+      transition: opacity .4s ease;
+    }
+
+    #status.hide {
+      opacity: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="screen"></div>
+  <div id="status">Watch-only mode: connecting...</div>
+
+  <script type="module">
+    import RFB from "/novnc/core/rfb.js";
+
+    const screen = document.getElementById("screen");
+    const status = document.getElementById("status");
+
+    function setStatus(text, hide = false) {
+      status.textContent = text;
+      status.classList.remove("hide");
+
+      if (hide) {
+        clearTimeout(setStatus.timer);
+        setStatus.timer = setTimeout(() => {
+          status.classList.add("hide");
+        }, 1800);
+      }
+    }
+
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${protocol}//${location.host}/websockify`;
+
+    const rfb = new RFB(screen, url, {
+      shared: true,
+      credentials: {}
+    });
+
+    rfb.scaleViewport = true;
+    rfb.resizeSession = true;
+    rfb.clipViewport = false;
+    rfb.dragViewport = false;
+    rfb.viewOnly = true;
+    rfb.qualityLevel = 5;
+    rfb.compressionLevel = 9;
+    rfb.showDotCursor = false;
+
+    rfb.addEventListener("connect", () => {
+      setStatus("Watch-only connected. Input disabled for smoother viewing.", true);
+    });
+
+    rfb.addEventListener("disconnect", () => {
+      setStatus("Disconnected. Refresh this tab or restart the browser.");
+    });
+
+    document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+    document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
+    document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
+    document.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false });
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
+  </script>
+</body>
+</html>
