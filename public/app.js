@@ -115,12 +115,18 @@ document.getElementById("keyboardBtn").addEventListener("click", () => {
 
 let textQueue = "";
 let textTimer = 0;
+let textSendChain = Promise.resolve();
 function flushText() {
   clearTimeout(textTimer);
   textTimer = 0;
   const text = textQueue;
   textQueue = "";
-  if (text) postJson("/api/text", { text }).catch(() => toast("Text could not be sent."));
+  if (text) {
+    textSendChain = textSendChain
+      .then(() => postJson("/api/text", { text }))
+      .catch(() => toast("Text could not be sent."));
+  }
+  return textSendChain;
 }
 
 keyboardBox.addEventListener("input", (event) => {
@@ -141,7 +147,7 @@ keyboardBox.addEventListener("keydown", async (event) => {
   const keys = { Enter: "Enter", Backspace: "Backspace", Tab: "Tab", Escape: "Escape" };
   if (!keys[event.key]) return;
   event.preventDefault();
-  flushText();
+  await flushText();
   await postJson("/api/key", { key: keys[event.key] }).catch(() => {});
   if (event.key === "Enter") keyboardBox.value = "";
 });
@@ -170,16 +176,27 @@ let scrollPointer = null;
 let scrollPoint = null;
 let pendingScroll = null;
 let scrollTimer = 0;
-function queueRemoteScroll(point, deltaY) {
-  if (Math.abs(deltaY) < 1) return;
-  pendingScroll = { ...point, deltaY: (pendingScroll?.deltaY || 0) + deltaY };
+let scrollSending = false;
+function sendPendingRemoteScroll() {
+  scrollTimer = 0;
+  if (scrollSending || !pendingScroll) return;
+  const payload = pendingScroll;
+  pendingScroll = null;
+  scrollSending = true;
+  postJson("/api/scroll", payload).catch(() => {}).finally(() => {
+    scrollSending = false;
+    if (pendingScroll && !scrollTimer) scrollTimer = setTimeout(sendPendingRemoteScroll, 20);
+  });
+}
+function queueRemoteScroll(point, deltaX, deltaY) {
+  if (Math.abs(deltaX) + Math.abs(deltaY) < 1) return;
+  pendingScroll = {
+    ...point,
+    deltaX: (pendingScroll?.deltaX || 0) + deltaX,
+    deltaY: (pendingScroll?.deltaY || 0) + deltaY
+  };
   if (scrollTimer) return;
-  scrollTimer = setTimeout(async () => {
-    scrollTimer = 0;
-    const payload = pendingScroll;
-    pendingScroll = null;
-    if (payload) await postJson("/api/scroll", payload).catch(() => {});
-  }, 40);
+  scrollTimer = setTimeout(sendPendingRemoteScroll, 55);
 }
 
 screen.addEventListener("pointerdown", (event) => {
@@ -200,7 +217,10 @@ screen.addEventListener("pointermove", (event) => {
   const dy = event.clientY - scrollPoint.y;
   scrollPoint = { x: event.clientX, y: event.clientY };
   const bounds = screen.getBoundingClientRect();
-  queueRemoteScroll({ x: (event.clientX - bounds.left) / bounds.width, y: (event.clientY - bounds.top) / bounds.height, deltaY: 0 }, -dy);
+  queueRemoteScroll({
+    x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
+    y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))
+  }, -dx, -dy);
 }, true);
 
 function endRemoteScroll(event) {
@@ -212,9 +232,10 @@ function endRemoteScroll(event) {
 }
 screen.addEventListener("pointerup", endRemoteScroll, true);
 screen.addEventListener("pointercancel", endRemoteScroll, true);
+screen.addEventListener("lostpointercapture", endRemoteScroll, true);
 
 const qualityModes = {
-  fast: { quality: 4, compression: 1, label: "Fast video · reduced network load" },
+  fast: { quality: 4, compression: 1, label: "Fast video · lower latency" },
   balanced: { quality: 7, compression: 2, label: "Balanced stream quality" },
   sharp: { quality: 9, compression: 1, label: "Sharp stream quality" }
 };
@@ -233,11 +254,14 @@ function getWatchPortUrl() {
 }
 
 document.getElementById("watchPortBtn").addEventListener("click", async () => {
+  // Open synchronously from the tap so mobile popup blockers allow the new tab.
+  window.open(getWatchPortUrl(), "_blank", "noopener,noreferrer");
   try {
     await postJson("/api/watch-mode", {});
-    window.open(getWatchPortUrl(), "_blank", "noopener,noreferrer");
     toast("Watch only opened in a new tab");
-  } catch (error) { toast(error.message || "Watch tab failed."); }
+  } catch (error) {
+    toast(error.message || "Watch tab failed.");
+  }
 });
 
 document.getElementById("saveBtn").addEventListener("click", async () => {

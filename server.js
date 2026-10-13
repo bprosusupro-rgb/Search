@@ -322,6 +322,7 @@ function startBrowser() {
       `--accept-lang=${GERMANY.acceptLanguage}`,
       "--no-first-run",
       "--no-default-browser-check",
+      "--disable-session-crashed-bubble",
       "--disable-sync",
       "--disable-background-networking",
       "--disable-component-update",
@@ -540,19 +541,25 @@ app.post("/api/scroll", async (req, res) => {
   try {
     const xRatio = Math.max(0, Math.min(1, Number(req.body?.x) || 0));
     const yRatio = Math.max(0, Math.min(1, Number(req.body?.y) || 0));
+    const deltaX = Math.max(-1200, Math.min(1200, Number(req.body?.deltaX) || 0));
     const deltaY = Math.max(-1200, Math.min(1200, Number(req.body?.deltaY) || 0));
-    if (!deltaY) return res.json({ ok: true });
+    if (!deltaX && !deltaY) return res.json({ ok: true });
 
-    const viewport = await cdp("Runtime.evaluate", {
-      expression: "({ width: window.innerWidth, height: window.innerHeight })",
-      returnByValue: true
-    });
-    const { width = 1280, height = 720 } = viewport?.result?.value || {};
+    // Reuse dimensions briefly: swiping can generate many wheel events per second.
+    if (!app.locals.scrollViewport || Date.now() - app.locals.scrollViewportAt > 1000) {
+      const viewport = await cdp("Runtime.evaluate", {
+        expression: "({ width: window.innerWidth, height: window.innerHeight })",
+        returnByValue: true
+      });
+      app.locals.scrollViewport = viewport?.result?.value || { width: 1280, height: 720 };
+      app.locals.scrollViewportAt = Date.now();
+    }
+    const { width = 1280, height = 720 } = app.locals.scrollViewport;
     await cdp("Input.dispatchMouseEvent", {
       type: "mouseWheel",
       x: Math.round(xRatio * width),
       y: Math.round(yRatio * height),
-      deltaX: 0,
+      deltaX,
       deltaY
     });
     res.json({ ok: true });

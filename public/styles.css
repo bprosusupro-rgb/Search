@@ -17,6 +17,8 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background:
 button, input, select { font: inherit; }
 button { color: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.skipLink { position: fixed; z-index: 50; top: 8px; left: 8px; padding: 10px 14px; border-radius: 8px; color: var(--accent-ink); background: var(--accent); transform: translateY(-160%); }
+.skipLink:focus { transform: translateY(0); }
 
 .app { width: 100%; height: 100vh; height: 100dvh; padding: calc(10px + var(--safe-top)) 12px calc(10px + var(--safe-bottom)); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; }
 .topbar { min-width: 0; display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; align-items: center; gap: 14px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
@@ -28,6 +30,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .address { display: flex; align-items: center; min-width: 0; height: 44px; border: 1px solid var(--line); border-radius: 11px; background: #0d1116; overflow: hidden; }
 .addressGlyph { padding-left: 13px; color: var(--muted); }
 .address input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; color: var(--text); padding: 0 11px; font-size: 14px; }
+.address:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent); }
 .goBtn { height: 34px; margin: 4px; padding: 0 15px; border: 0; border-radius: 8px; color: var(--accent-ink); background: var(--accent); font-size: 13px; font-weight: 750; }
 .toolbar { display: flex; align-items: center; gap: 5px; }
 .iconBtn { min-width: 42px; height: 42px; padding: 0 9px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: #d2d9df; font-size: 16px; }
@@ -89,17 +92,21 @@ body.focus .immersiveExitBtn { display: block; }
   .toolbar .iconBtn { min-width: 35px; height: 36px; font-size: 13px; }
   .address input { font-size: 13px; }
   .goBtn { padding: 0 13px; }
-  .controlbar { justify-content: space-between; gap: 4px; padding: 5px; }
-  .modeBtn { min-width: 75px; padding: 0 8px; font-size: 12px; }
-  .qualityControl select { max-width: 104px; font-size: 11px; }
-  .controlBtn { padding: 0 8px; font-size: 11px; }
-  .controlBtn span { display: none; }
+  .controlbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding: 7px; }
+  .modeSwitch { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+  .modeBtn { min-width: 0; min-height: 40px; padding: 0 6px; font-size: 12px; white-space: nowrap; }
+  .qualityControl { min-width: 0; }
+  .qualityControl select { width: 100%; max-width: none; min-height: 40px; font-size: 12px; }
+  .controlBtn { min-height: 40px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
 }
 
 @media (max-width: 380px) {
-  .modeBtn { min-width: 38px; padding: 0 7px; }
-  .modeBtn span { display: none; }
-  .qualityControl select { max-width: 96px; }
+  .modeBtn { padding: 0 4px; font-size: 11px; }
+  .qualityControl select { max-width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
 @media (orientation: landscape) and (max-height: 520px) {

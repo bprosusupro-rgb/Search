@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <a class="skipLink" href="#viewer">Skip to browser</a>
   <div class="app">
     <header class="topbar">
       <a class="brand" href="/" aria-label="Real Browser home">
@@ -16,12 +17,12 @@
       </a>
       <form class="address" id="addressForm">
         <span class="addressGlyph" aria-hidden="true">↗</span>
-        <input id="addressInput" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url" placeholder="Search or enter a website" aria-label="Search or enter a website" />
+        <input id="addressInput" name="url" type="text" autocomplete="url" autocapitalize="off" spellcheck="false" inputmode="url" placeholder="Search or enter a website" aria-label="Search or enter a website" />
         <button class="goBtn" id="goBtn" type="submit">Go</button>
       </form>
       <div class="toolbar" aria-label="Browser controls">
         <button class="iconBtn" id="keyboardBtn" type="button" aria-label="Open keyboard" title="Keyboard">⌨</button>
-        <button class="iconBtn" id="ytBackBtn" type="button" aria-label="Skip back 10 seconds" title="Back 10 seconds">−10</button>
+        <button class="iconBtn" id="ytBackBtn" type="button" aria-label="Skip back 10 seconds" title="Back 10 seconds"><span aria-hidden="true">−10</span></button>
         <button class="iconBtn playBtn" id="ytPlayBtn" type="button" aria-label="Play or pause video" title="Play or pause">▶</button>
         <button class="iconBtn" id="ytForwardBtn" type="button" aria-label="Skip forward 10 seconds" title="Forward 10 seconds">+10</button>
         <button class="iconBtn" id="reloadBtn" type="button" aria-label="Reload page" title="Reload">↻</button>
@@ -52,7 +53,7 @@
         </select>
       </label>
       <button class="controlBtn" id="watchPortBtn" type="button" title="Open watch only in a separate tab">↗ <span>Watch tab</span></button>
-      <span class="sessionStatus" id="modeStatus">Touch to move · drag to scroll</span>
+      <span class="sessionStatus" id="modeStatus">Touch mode · tap to interact</span>
     </footer>
 
     <input id="keyboardBox" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="Type into the remote browser…" aria-label="Type into the remote browser" />
