@@ -336,8 +336,8 @@ function startBrowser() {
       "--force-dark-mode",
       "--enable-features=WebUIDarkMode",
       "--window-size=1500,950",
-      // F11-style fullscreen: maximized windows still leave browser chrome visible.
-      "--start-fullscreen",
+      // Fill the virtual desktop while keeping Chromium controls visible and movable.
+      "--start-maximized",
       "--no-sandbox",
       `http://127.0.0.1:${PORT}/real-home.html`
     ], env);
