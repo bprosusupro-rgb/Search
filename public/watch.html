@@ -2,8 +2,9 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Watch Port</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#080a0d" />
+  <title>Watch · Real Browser</title>
   <style>
     html,
     body,
@@ -11,8 +12,9 @@
       margin: 0;
       width: 100%;
       height: 100%;
+      height: 100dvh;
       overflow: hidden;
-      background: #000;
+      background: #080a0d;
       touch-action: none;
       overscroll-behavior: none;
     }
@@ -29,14 +31,15 @@
 
     #status {
       position: fixed;
-      left: 14px;
-      top: 14px;
+      left: max(12px, env(safe-area-inset-left));
+      top: max(12px, env(safe-area-inset-top));
       z-index: 10;
       padding: 9px 12px;
       border-radius: 999px;
-      background: rgba(0,0,0,.58);
+      background: rgba(20,25,32,.88);
       color: white;
       font: 12px system-ui, sans-serif;
+      border: 1px solid rgba(255,255,255,.14);
       pointer-events: none;
       opacity: 1;
       transition: opacity .4s ease;
@@ -45,11 +48,29 @@
     #status.hide {
       opacity: 0;
     }
+
+    #fullscreen {
+      position: fixed;
+      right: max(12px, env(safe-area-inset-right));
+      top: max(12px, env(safe-area-inset-top));
+      z-index: 11;
+      width: 40px;
+      height: 40px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 11px;
+      color: white;
+      background: rgba(20,25,32,.88);
+      font-size: 18px;
+      touch-action: manipulation;
+    }
+
+    #screen canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
   </style>
 </head>
 <body>
   <div id="screen"></div>
   <div id="status">Watch-only mode: connecting...</div>
+  <button id="fullscreen" type="button" aria-label="Enter fullscreen">⛶</button>
 
   <script type="module">
     import RFB from "/novnc/core/rfb.js";
@@ -78,27 +99,33 @@
     });
 
     rfb.scaleViewport = true;
-    rfb.resizeSession = true;
+    // The viewer should fit this screen without changing the shared Chromium desktop size.
+    rfb.resizeSession = false;
     rfb.clipViewport = false;
     rfb.dragViewport = false;
     rfb.viewOnly = true;
-    rfb.qualityLevel = 5;
-    rfb.compressionLevel = 9;
+    const quality = new URLSearchParams(location.search).get("quality");
+    rfb.qualityLevel = quality === "sharp" ? 9 : quality === "fast" ? 4 : 7;
+    rfb.compressionLevel = 2;
     rfb.showDotCursor = false;
 
     rfb.addEventListener("connect", () => {
-      setStatus("Watch-only connected. Input disabled for smoother viewing.", true);
+      setStatus("Watch only · touch for fullscreen controls", true);
     });
 
     rfb.addEventListener("disconnect", () => {
       setStatus("Disconnected. Refresh this tab or restart the browser.");
     });
 
-    document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
-    document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive: false });
-    document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive: false });
-    document.addEventListener("gestureend", (e) => e.preventDefault(), { passive: false });
     document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+    document.getElementById("fullscreen").addEventListener("click", async () => {
+      try {
+        if (!document.fullscreenElement) await screen.requestFullscreen();
+        else await document.exitFullscreen();
+      } catch { setStatus("Fullscreen is unavailable in this browser."); }
+    });
+    document.addEventListener("pointerdown", () => setStatus("Watch only · input disabled", true), { passive: true });
   </script>
 </body>
 </html>

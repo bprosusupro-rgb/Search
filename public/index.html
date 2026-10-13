@@ -1,46 +1,62 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Real noVNC Browser</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0e12" />
+  <title>Real Browser</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <div class="app">
     <header class="topbar">
-      <div class="brand">
-        <div class="brandIcon">◈</div>
-        <div>
-          <div class="brandTitle">Real Browser</div>
-          <div class="brandSub">noVNC + Chromium, no bad screencast canvas</div>
-        </div>
+      <a class="brand" href="/" aria-label="Real Browser home">
+        <span class="brandIcon" aria-hidden="true">◈</span>
+        <span class="brandWords"><span class="brandTitle">Real Browser</span><span class="brandSub">Remote Chromium · noVNC</span></span>
+      </a>
+      <form class="address" id="addressForm">
+        <span class="addressGlyph" aria-hidden="true">↗</span>
+        <input id="addressInput" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url" placeholder="Search or enter a website" aria-label="Search or enter a website" />
+        <button class="goBtn" id="goBtn" type="submit">Go</button>
+      </form>
+      <div class="toolbar" aria-label="Browser controls">
+        <button class="iconBtn" id="keyboardBtn" type="button" aria-label="Open keyboard" title="Keyboard">⌨</button>
+        <button class="iconBtn" id="ytBackBtn" type="button" aria-label="Skip back 10 seconds" title="Back 10 seconds">−10</button>
+        <button class="iconBtn playBtn" id="ytPlayBtn" type="button" aria-label="Play or pause video" title="Play or pause">▶</button>
+        <button class="iconBtn" id="ytForwardBtn" type="button" aria-label="Skip forward 10 seconds" title="Forward 10 seconds">+10</button>
+        <button class="iconBtn" id="reloadBtn" type="button" aria-label="Reload page" title="Reload">↻</button>
+        <button class="iconBtn" id="focusBtn" type="button" aria-label="Toggle immersive mode" title="Immersive view">⛶</button>
+        <button class="iconBtn" id="saveBtn" type="button" aria-label="Save browser session" title="Save session">↓</button>
       </div>
-
-      <div class="address">
-        <input id="addressInput" autocomplete="off" spellcheck="false" placeholder="Search or enter URL..." />
-        <button id="goBtn">Go</button>
-      </div>
-
-      <button id="keyboardBtn">Keyboard</button>
-      <button id="saveBtn">Save</button>
-      <button id="watchPortBtn">Watch Port</button>
-      <button id="ytBackBtn">−10</button>
-      <button id="ytPlayBtn">Play</button>
-      <button id="ytForwardBtn">+10</button>
-      <button id="reloadBtn">Reload</button>
-      <button id="focusBtn">⛶</button>
     </header>
 
-    <main class="viewer">
-      <iframe id="realFrame" src="/real.html" allow="clipboard-read; clipboard-write; fullscreen; autoplay"></iframe>
+    <main class="viewer" id="viewer">
+      <div id="screen" aria-label="Remote browser screen"></div>
+      <div class="connection" id="connection" role="status"><span class="connectionDot"></span><span id="connectionText">Connecting to Chromium…</span></div>
+      <button id="fullscreenBtn" class="fullscreenBtn" type="button" aria-label="Enter fullscreen">⛶</button>
+      <button id="immersiveExitBtn" class="immersiveExitBtn" type="button" aria-label="Exit immersive view">✕ Exit view</button>
+      <div id="toast" role="status" aria-live="polite"></div>
     </main>
 
-    <input id="keyboardBox" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type here → sends to focused Chromium field" />
+    <footer class="controlbar" aria-label="Session controls">
+      <div class="modeSwitch" role="group" aria-label="Interaction mode">
+        <button id="controlModeBtn" class="modeBtn active" type="button" aria-pressed="true">⌖ <span>Touch</span></button>
+        <button id="scrollModeBtn" class="modeBtn" type="button" aria-pressed="false">↕ <span>Scroll</span></button>
+        <button id="watchModeBtn" class="modeBtn" type="button" aria-pressed="false">◉ <span>Watch</span></button>
+      </div>
+      <label class="qualityControl" for="qualitySelect"><span>Stream</span>
+        <select id="qualitySelect" aria-label="Stream quality">
+          <option value="fast">Fast video</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="sharp">Sharp</option>
+        </select>
+      </label>
+      <button class="controlBtn" id="watchPortBtn" type="button" title="Open watch only in a separate tab">↗ <span>Watch tab</span></button>
+      <span class="sessionStatus" id="modeStatus">Touch to move · drag to scroll</span>
+    </footer>
 
-    <div id="toast"></div>
+    <input id="keyboardBox" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="Type into the remote browser…" aria-label="Type into the remote browser" />
   </div>
-
-  <script src="/app.js"></script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

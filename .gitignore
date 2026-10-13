@@ -4,4 +4,5 @@ npm-debug.log*
 .DS_Store
 .env
 .cache/
+.browser_state/
 

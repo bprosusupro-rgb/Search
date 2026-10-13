@@ -504,7 +504,12 @@ app.post("/api/key", async (req, res) => {
       ArrowUp: 38,
       ArrowRight: 39,
       ArrowDown: 40,
-      Delete: 46
+      Delete: 46,
+      Home: 36,
+      End: 35,
+      PageUp: 33,
+      PageDown: 34,
+      F5: 116
     };
 
     const code = keyMap[key] || 0;
@@ -525,6 +530,31 @@ app.post("/api/key", async (req, res) => {
       nativeVirtualKeyCode: code
     });
 
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message || String(error) });
+  }
+});
+
+app.post("/api/scroll", async (req, res) => {
+  try {
+    const xRatio = Math.max(0, Math.min(1, Number(req.body?.x) || 0));
+    const yRatio = Math.max(0, Math.min(1, Number(req.body?.y) || 0));
+    const deltaY = Math.max(-1200, Math.min(1200, Number(req.body?.deltaY) || 0));
+    if (!deltaY) return res.json({ ok: true });
+
+    const viewport = await cdp("Runtime.evaluate", {
+      expression: "({ width: window.innerWidth, height: window.innerHeight })",
+      returnByValue: true
+    });
+    const { width = 1280, height = 720 } = viewport?.result?.value || {};
+    await cdp("Input.dispatchMouseEvent", {
+      type: "mouseWheel",
+      x: Math.round(xRatio * width),
+      y: Math.round(yRatio * height),
+      deltaX: 0,
+      deltaY
+    });
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message || String(error) });
